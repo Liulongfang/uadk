@@ -44,7 +44,8 @@ typedef struct wd_dev_mask wd_dev_mask_t;
 
 typedef void (*wd_log)(const char *format, ...);
 
-#ifndef WD_NO_LOG
+//#ifndef WD_NO_LOG
+#if 0
 #define WD_DEBUG(fmt, args...)  \
 	do {\
 		openlog("uadk-debug", LOG_CONS | LOG_PID, LOG_LOCAL5);\
