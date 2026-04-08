@@ -784,7 +784,7 @@ int wd_join_gather_init(char *alg, __u32 sched_type, int task_type,
 
 		/* Init ctx param and prepare for ctx request */
 		join_gather_ctx_params.ctx_set_num = &join_gather_ctx_num;
-		ret = wd_ctx_param_init_nw(&join_gather_ctx_params, ctx_params,
+		ret = wd_ctx_param_init(&join_gather_ctx_params, ctx_params,
 					alg, task_type,	WD_JOIN_GATHER_TYPE, 1);
 		if (ret) {
 			if (ret == -WD_EAGAIN) {
@@ -813,7 +813,7 @@ int wd_join_gather_init(char *alg, __u32 sched_type, int task_type,
 	if (ret)
 		goto out_uninit_nolock;
 
-	ret = wd_alg_init_driver_nw(&wd_join_gather_setting.config);
+	ret = wd_alg_init_driver(&wd_join_gather_setting.config);
 	if (ret)
 		goto out_drv_deconfig;
 
@@ -844,7 +844,7 @@ void wd_join_gather_uninit(void)
 	if (ret)
 		return;
 
-	wd_alg_uninit_driver_nw(&wd_join_gather_setting.config);
+	wd_alg_uninit_driver(&wd_join_gather_setting.config);
 	wd_ctx_drv_deconfig(&wd_join_gather_setting.config);
 	wd_alg_attrs_uninit(&wd_join_gather_init_attrs);
 

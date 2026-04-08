@@ -250,7 +250,7 @@ int wd_ecc_init(struct wd_ctx_config *config, struct wd_sched *sched)
 	if (ret)
 		goto out_uninit_nolock;
 
-	ret = wd_alg_init_driver_nw(&wd_ecc_setting.config);
+	ret = wd_alg_init_driver(&wd_ecc_setting.config);
 	if (ret)
 		goto out_drv_deconfig;
 
@@ -273,7 +273,7 @@ void wd_ecc_uninit(void)
 {
 	int ret;
 
-	wd_alg_uninit_driver_nw(&wd_ecc_setting.config);
+	wd_alg_uninit_driver(&wd_ecc_setting.config);
 	wd_ctx_drv_deconfig(&wd_ecc_setting.config);
 	ret = wd_ecc_common_uninit();
 	if (ret)
@@ -317,7 +317,7 @@ int wd_ecc_init2_(char *alg, __u32 sched_type, int task_type, struct wd_ctx_para
 
 		/* Init ctx param and prepare for ctx request */
 		ecc_ctx_params.ctx_set_num = ecc_ctx_num;
-		ret = wd_ctx_param_init_nw(&ecc_ctx_params, ctx_params,
+		ret = wd_ctx_param_init(&ecc_ctx_params, ctx_params,
 					alg, task_type, WD_ECC_TYPE, WD_EC_OP_MAX);
 		if (ret) {
 			if (ret == -WD_EAGAIN)
@@ -347,7 +347,7 @@ int wd_ecc_init2_(char *alg, __u32 sched_type, int task_type, struct wd_ctx_para
 	if (ret)
 		goto out_uninit_nolock;
 
-	ret = wd_alg_init_driver_nw(&wd_ecc_setting.config);
+	ret = wd_alg_init_driver(&wd_ecc_setting.config);
 	if (ret)
 		goto out_drv_deconfig;
 
