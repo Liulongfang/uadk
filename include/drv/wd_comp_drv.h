@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <linux/types.h>
 
+#include "../wd_alg_common.h"
 #include "../wd_comp.h"
 #include "../wd_util.h"
 
