@@ -465,26 +465,6 @@ void wd_release_drv(struct wd_alg_driver *drv)
 	pthread_mutex_unlock(&mutex);
 }
 
-int wd_alg_driver_init(struct wd_alg_driver *drv, void *conf)
-{
-	return drv->init(drv, conf);
-}
-
-void wd_alg_driver_exit(struct wd_alg_driver *drv)
-{
-	drv->exit(drv);
-}
-
-int wd_alg_driver_send(struct wd_alg_driver *drv, handle_t ctx, void *msg)
-{
-	return drv->send(drv, ctx, msg);
-}
-
-int wd_alg_driver_recv(struct wd_alg_driver *drv, handle_t ctx, void *msg)
-{
-	return drv->recv(drv, ctx, msg);
-}
-
 int wd_alg_get_dev_usage(const char *dev_name, const char *alg_type, __u8 alg_op_type)
 {
 	struct wd_alg_list *pnext = alg_list_head.next;

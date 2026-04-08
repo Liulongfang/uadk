@@ -308,11 +308,11 @@ update_table:
 	return ret;
 }
 
-int dae_init(struct wd_alg_driver *drv, void *conf)
+int dae_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = conf;
+	struct hisi_dae_ctx *dae_ctx = priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_dae_ctx *priv;
 	handle_t h_qp = 0;
 	handle_t h_ctx;
 	__u32 i, j;
@@ -322,10 +322,6 @@ int dae_init(struct wd_alg_driver *drv, void *conf)
 		WD_ERR("invalid: dae init config is null or ctx num is 0!\n");
 		return -WD_EINVAL;
 	}
-
-	priv = malloc(sizeof(struct hisi_dae_ctx));
-	if (!priv)
-		return -WD_ENOMEM;
 
 	qm_priv.op_type = DAE_SQC_ALG_TYPE;
 	qm_priv.sqe_size = sizeof(struct dae_sqe);
@@ -347,8 +343,7 @@ int dae_init(struct wd_alg_driver *drv, void *conf)
 		if (ret)
 			goto free_h_qp;
 	}
-	memcpy(&priv->config, config, sizeof(struct wd_ctx_config_internal));
-	drv->priv = priv;
+	memcpy(&dae_ctx->config, config, sizeof(struct wd_ctx_config_internal));
 
 	return WD_SUCCESS;
 
@@ -362,22 +357,22 @@ out:
 			hisi_qm_free_qp(h_qp);
 		}
 	}
-	free(priv);
 	return ret;
 }
 
-void dae_exit(struct wd_alg_driver *drv)
+void dae_exit(void *priv)
 {
 	struct wd_ctx_config_internal *config;
-	struct hisi_dae_ctx *priv;
+	struct hisi_dae_ctx *dae_ctx = priv;
 	handle_t h_qp;
 	__u32 i;
 
-	if (!drv || !drv->priv)
+	if (!priv) {
+		WD_ERR("invalid: input parameter is NULL!\n");
 		return;
+	}
 
-	priv = (struct hisi_dae_ctx *)drv->priv;
-	config = &priv->config;
+	config = &dae_ctx->config;
 	for (i = 0; i < config->ctx_num; i++) {
 		h_qp = (handle_t)wd_ctx_get_priv(config->ctxs[i].ctx);
 		if (h_qp) {
@@ -385,9 +380,6 @@ void dae_exit(struct wd_alg_driver *drv)
 			hisi_qm_free_qp(h_qp);
 		}
 	}
-
-	free(priv);
-	drv->priv = NULL;
 }
 
 int dae_get_usage(void *param)
@@ -406,7 +398,7 @@ int dae_get_usage(void *param)
 		return -WD_EINVAL;
 	}
 
-	priv = (struct hisi_dae_ctx *)drv->priv;
+	priv = (struct hisi_dae_ctx *)drv->drv_data;
 	if (!priv)
 		return -WD_EACCES;
 

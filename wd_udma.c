@@ -22,6 +22,7 @@ static struct wd_udma_setting {
 	struct wd_sched sched;
 	struct wd_async_msg_pool pool;
 	struct wd_alg_driver *driver;
+	void *priv;
 	void *dlhandle;
 	void *dlh_list;
 } wd_udma_setting;
@@ -229,7 +230,7 @@ int wd_do_udma_sync(handle_t h_sess, struct wd_udma_req *req)
 	msg_handle.send = wd_udma_setting.driver->send;
 	msg_handle.recv = wd_udma_setting.driver->recv;
 	pthread_spin_lock(&ctx->lock);
-	ret = wd_handle_msg_sync(wd_udma_setting.driver, &msg_handle, ctx->ctx,
+	ret = wd_handle_msg_sync(&msg_handle, ctx->ctx,
 				 &msg, NULL, wd_udma_setting.config.epoll_en);
 	pthread_spin_unlock(&ctx->lock);
 	if (unlikely(ret))
@@ -276,7 +277,7 @@ int wd_do_udma_async(handle_t sess, struct wd_udma_req *req)
 	fill_udma_msg(msg, req);
 	msg->tag = mid;
 
-	ret = wd_alg_driver_send(wd_udma_setting.driver, ctx->ctx, msg);
+	ret = wd_udma_setting.driver->send(ctx->ctx, msg);
 	if (unlikely(ret)) {
 		if (ret != -WD_EBUSY)
 			WD_ERR("failed to send udma BD, hw is err!\n");
@@ -314,7 +315,7 @@ static int wd_udma_poll_ctx(__u32 idx, __u32 expt, __u32 *count)
 	ctx = config->ctxs + idx;
 
 	do {
-		ret = wd_alg_driver_recv(wd_udma_setting.driver, ctx->ctx, &rcv_msg);
+		ret = wd_udma_setting.driver->recv(ctx->ctx, &rcv_msg);
 		if (ret == -WD_EAGAIN) {
 			return ret;
 		} else if (unlikely(ret)) {
@@ -364,7 +365,9 @@ static void wd_udma_alg_uninit(void)
 	wd_uninit_async_request_pool(&wd_udma_setting.pool);
 	/* Unset config, sched, driver */
 	wd_clear_sched(&wd_udma_setting.sched);
-	wd_alg_uninit_driver(&wd_udma_setting.config, wd_udma_setting.driver);
+	wd_alg_uninit_driver(&wd_udma_setting.config,
+						 wd_udma_setting.driver,
+						 &wd_udma_setting.priv);
 }
 
 void wd_udma_uninit(void)
@@ -405,7 +408,9 @@ static int wd_udma_alg_init(struct wd_ctx_config *config, struct wd_sched *sched
 	if (ret < 0)
 		goto out_clear_sched;
 
-	ret = wd_alg_init_driver(&wd_udma_setting.config, wd_udma_setting.driver);
+	ret = wd_alg_init_driver(&wd_udma_setting.config,
+						     wd_udma_setting.driver,
+							 &wd_udma_setting.priv);
 	if (ret)
 		goto out_clear_pool;
 

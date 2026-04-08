@@ -680,11 +680,11 @@ out:
 	return -WD_EINVAL;
 }
 
-static int hpre_rsa_dh_init(struct wd_alg_driver *drv, void *conf)
+static int hpre_rsa_dh_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = (struct wd_ctx_config_internal *)conf;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_hpre_ctx *priv;
 	int ret;
 
 	if (!config->ctx_num) {
@@ -692,27 +692,19 @@ static int hpre_rsa_dh_init(struct wd_alg_driver *drv, void *conf)
 		return -WD_EINVAL;
 	}
 
-	priv = malloc(sizeof(struct hisi_hpre_ctx));
-	if (!priv)
-		return -WD_EINVAL;
-
 	qm_priv.op_type = HPRE_HW_V2_ALG_TYPE;
-	ret = hpre_init_qm_priv(config, priv, &qm_priv);
-	if (ret) {
-		free(priv);
+	ret = hpre_init_qm_priv(config, hpre_ctx, &qm_priv);
+	if (ret)
 		return ret;
-	}
-
-	drv->priv = priv;
 
 	return WD_SUCCESS;
 }
 
-static int hpre_ecc_init(struct wd_alg_driver *drv, void *conf)
+static int hpre_ecc_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = (struct wd_ctx_config_internal *)conf;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_hpre_ctx *priv;
 	int ret;
 
 	if (!config->ctx_num) {
@@ -720,44 +712,28 @@ static int hpre_ecc_init(struct wd_alg_driver *drv, void *conf)
 		return -WD_EINVAL;
 	}
 
-	priv = malloc(sizeof(struct hisi_hpre_ctx));
-	if (!priv)
-		return -WD_EINVAL;
-
 	qm_priv.op_type = HPRE_HW_V3_ECC_ALG_TYPE;
-	ret = hpre_init_qm_priv(config, priv, &qm_priv);
-	if (ret) {
-		free(priv);
+	ret = hpre_init_qm_priv(config, hpre_ctx, &qm_priv);
+	if (ret)
 		return ret;
-	}
-
-	drv->priv = priv;
 
 	return WD_SUCCESS;
 }
 
-static void hpre_exit(struct wd_alg_driver *drv)
+static void hpre_exit(void *priv)
 {
-	struct wd_ctx_config_internal *config;
-	struct hisi_hpre_ctx *priv;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
+	struct wd_ctx_config_internal *config = &hpre_ctx->config;
 	handle_t h_qp;
 	__u32 i;
 
-	if (!drv || !drv->priv)
-		return;
-
-	priv = (struct hisi_hpre_ctx *)drv->priv;
-	config = &priv->config;
 	for (i = 0; i < config->ctx_num; i++) {
 		h_qp = (handle_t)wd_ctx_get_priv(config->ctxs[i].ctx);
 		hisi_qm_free_qp(h_qp);
 	}
-
-	free(priv);
-	drv->priv = NULL;
 }
 
-static int rsa_send(struct wd_alg_driver *drv, handle_t ctx, void *rsa_msg)
+static int rsa_send(handle_t ctx, void *rsa_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_rsa_msg *msg = rsa_msg;
@@ -829,7 +805,7 @@ static void hpre_result_check(struct hisi_hpre_sqe *hw_msg,
 	}
 }
 
-static int rsa_recv(struct wd_alg_driver *drv, handle_t ctx, void *rsa_msg)
+static int rsa_recv(handle_t ctx, void *rsa_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -949,7 +925,7 @@ static int dh_out_transfer(struct wd_dh_msg *msg, struct hisi_hpre_sqe *hw_msg,
 	return WD_SUCCESS;
 }
 
-static int dh_send(struct wd_alg_driver *drv, handle_t ctx, void *dh_msg)
+static int dh_send(handle_t ctx, void *dh_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct map_info_cache cache = {0};
@@ -1020,7 +996,7 @@ dh_fail:
 	return ret;
 }
 
-static int dh_recv(struct wd_alg_driver *drv, handle_t ctx, void *dh_msg)
+static int dh_recv(handle_t ctx, void *dh_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -2147,7 +2123,7 @@ free_dst:
 	return ret;
 }
 
-static int ecc_send(struct wd_alg_driver *drv, handle_t ctx, void *ecc_msg)
+static int ecc_send(handle_t ctx, void *ecc_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_ecc_msg *msg = ecc_msg;
@@ -2743,7 +2719,7 @@ fail:
 	return ret;
 }
 
-static int ecc_recv(struct wd_alg_driver *drv, handle_t ctx, void *ecc_msg)
+static int ecc_recv(handle_t ctx, void *ecc_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_ecc_msg *msg = ecc_msg;
@@ -2786,7 +2762,7 @@ static handle_t hpre_find_dev_qp(struct wd_alg_driver *drv, const char *dev_name
 	handle_t qp = 0;
 	__u32 i;
 
-	priv = (struct hisi_hpre_ctx *)drv->priv;
+	priv = (struct hisi_hpre_ctx *)drv->drv_data;
 	if (!priv)
 		return 0;
 
@@ -2874,31 +2850,30 @@ static void ecc_sess_eops_uninit(struct wd_alg_driver *drv, void *params)
 	free(params);
 }
 
-static bool is_valid_hw_type(struct wd_alg_driver *drv)
+static bool is_valid_hw_type(void *drv_priv)
 {
 	struct hisi_hpre_ctx *hpre_ctx;
 	struct hisi_qp *qp;
 
-	if (unlikely(!drv || !drv->priv))
+	if (unlikely(!drv_priv))
 		return false;
 
-	hpre_ctx = (struct hisi_hpre_ctx *)drv->priv;
+	hpre_ctx = (struct hisi_hpre_ctx *)drv_priv;
 	qp = (struct hisi_qp *)wd_ctx_get_priv(hpre_ctx->config.ctxs[0].ctx);
 	if (!qp || qp->q_info.hw_type < HISI_QM_API_VER3_BASE)
 		return false;
 	return true;
 }
 
-static void ecc_sess_eops_params_cfg(struct wd_alg_driver *drv,
-				     struct wd_ecc_sess_setup *setup,
-				     struct wd_ecc_curve *cv, void *params)
+static void ecc_sess_eops_params_cfg(struct wd_ecc_sess_setup *setup,
+				     struct wd_ecc_curve *cv, void *drv_priv, void *params)
 {
 	__u8 data[SECP256R1_PARAM_SIZE] = SECG_P256_R1_PARAM;
 	struct hpre_ecc_ctx *ecc_ctx = params;
 	__u32 key_size;
 	int ret;
 
-	if (!is_valid_hw_type(drv))
+	if (!is_valid_hw_type(drv_priv))
 		return;
 
 	if (!ecc_ctx) {
@@ -2938,6 +2913,7 @@ static int hpre_ecc_get_extend_ops(void *ops)
 	.alg_name = (hpre_alg_name),\
 	.calc_type = UADK_ALG_HW,\
 	.priority = 100,\
+	.priv_size = sizeof(struct hisi_hpre_ctx),\
 	.queue_num = HPRE_CTX_Q_NUM_DEF,\
 	.op_type_num = 1,\
 	.fallback = 0,\
@@ -2962,6 +2938,7 @@ static struct wd_alg_driver hpre_rsa_driver = {
 	.alg_name = "rsa",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_hpre_ctx),
 	.queue_num = HPRE_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,
@@ -2977,6 +2954,7 @@ static struct wd_alg_driver hpre_dh_driver = {
 	.alg_name = "dh",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_hpre_ctx),
 	.queue_num = HPRE_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,
