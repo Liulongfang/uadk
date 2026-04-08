@@ -32,7 +32,6 @@ struct wd_agg_setting {
 	struct wd_ctx_config_internal config;
 	struct wd_sched sched;
 	struct wd_async_msg_pool pool;
-	struct wd_alg_driver *driver;
 	void *priv;
 	void *dlhandle;
 	void *dlh_list;
@@ -78,7 +77,6 @@ static void wd_agg_close_driver(void)
 	wd_dlclose_drv(wd_agg_setting.dlh_list);
 	wd_agg_setting.dlh_list = NULL;
 #else
-	wd_release_drv(wd_agg_setting.driver);
 	hisi_dae_remove();
 #endif
 }
@@ -354,29 +352,71 @@ out_key:
 
 static int wd_agg_init_sess_priv(struct wd_agg_sess *sess, struct wd_agg_sess_setup *setup)
 {
-	int ret;
+	struct wd_ctx_config_internal *config = &wd_agg_setting.config;
+	struct wd_alg_driver *drv;
+	struct wd_agg_ops *eops;
+	int ret, valid = 0;
+	__u32 i;
 
-	if (sess->ops.sess_init) {
-		if (!sess->ops.sess_uninit) {
-			WD_ERR("failed to get session uninit ops!\n");
-			return -WD_EINVAL;
-		}
-		ret = sess->ops.sess_init(setup, &sess->priv);
-		if (ret) {
-			WD_ERR("failed to init session priv!\n");
-			return ret;
+	for (i = 0; i < config->ctx_num; i++) {
+		drv = config->ctxs[i].drv;
+		if (!drv->get_extend_ops)
+			continue;
+
+		ret = drv->get_extend_ops(config->ctxs[i].extend_ops);
+		if (!ret && config->ctxs[i].extend_ops) {
+			valid++;
+			eops = config->ctxs[i].extend_ops;
+
+			if (eops->sess_init) {
+				if (!eops->sess_uninit) {
+					WD_ERR("failed to get session uninit ops!\n");
+					return -WD_EINVAL;
+				}
+				ret = eops->sess_init(setup, &sess->priv);
+				if (ret) {
+					WD_ERR("failed to init session priv!\n");
+					return ret;
+				}
+			}
+
+			if (eops->get_row_size) {
+				ret = eops->get_row_size(drv, sess->priv);
+				if (ret <= 0) {
+					if (eops->sess_uninit)
+						eops->sess_uninit(drv, sess->priv);
+					WD_ERR("failed to get hash table row size: %d!\n", ret);
+					return ret;
+				}
+				/* This needs to be executed only once. */
+				sess->hash_table.table_row_size = ret;
+			}
 		}
 	}
 
-	if (sess->ops.get_row_size) {
-		ret = sess->ops.get_row_size(wd_agg_setting.driver, sess->priv);
-		if (ret <= 0) {
-			if (sess->ops.sess_uninit)
-				sess->ops.sess_uninit(wd_agg_setting.driver, sess->priv);
-			WD_ERR("failed to get hash table row size: %d!\n", ret);
-			return -WD_EINVAL;
-		}
-		sess->hash_table.table_row_size = ret;
+	if (!valid) {
+		WD_ERR("failed to get agg extend ops!\n");
+		return -WD_EINVAL;
+	}
+
+	return WD_SUCCESS;
+}
+
+static int wd_agg_uninit_sess_priv(struct wd_agg_sess *sess)
+{
+	struct wd_ctx_config_internal *config = &wd_agg_setting.config;
+	struct wd_agg_ops *eops;
+	__u32 i;
+	int ret;
+
+	for (i = 0; i < config->ctx_num; i++) {
+		/* At this point, extends_ops has completed its initialization. */
+		eops = config->ctxs[i].extend_ops;
+		if (!eops)
+			continue;
+
+		if (eops->sess_uninit)
+			eops->sess_uninit(config->ctxs[i].drv, sess->priv);
 	}
 
 	return WD_SUCCESS;
@@ -401,7 +441,7 @@ handle_t wd_agg_alloc_sess(struct wd_agg_sess_setup *setup)
 	sess->agg_conf.out_cols_num = out_agg_cols_num;
 
 	sess->alg_name = wd_agg_alg_name;
-	ret = wd_drv_alg_support(sess->alg_name, wd_agg_setting.driver);
+	ret = wd_drv_alg_support(sess->alg_name, &wd_agg_setting.config);
 	if (!ret) {
 		WD_ERR("failed to support agg algorithm: %s!\n", sess->alg_name);
 		goto free_sess;
@@ -413,14 +453,6 @@ handle_t wd_agg_alloc_sess(struct wd_agg_sess_setup *setup)
 	if (WD_IS_ERR(sess->sched_key)) {
 		WD_ERR("failed to init agg session schedule key!\n");
 		goto free_sess;
-	}
-
-	if (wd_agg_setting.driver->get_extend_ops) {
-		ret = wd_agg_setting.driver->get_extend_ops(&sess->ops);
-		if (ret) {
-			WD_ERR("failed to get agg extend ops!\n");
-			goto free_key;
-		}
 	}
 
 	ret = wd_agg_init_sess_priv(sess, setup);
@@ -436,8 +468,7 @@ handle_t wd_agg_alloc_sess(struct wd_agg_sess_setup *setup)
 	return (handle_t)sess;
 
 uninit_priv:
-	if (sess->ops.sess_uninit)
-		sess->ops.sess_uninit(wd_agg_setting.driver, sess->priv);
+	wd_agg_uninit_sess_priv(sess);
 free_key:
 	free(sess->sched_key);
 free_sess:
@@ -458,8 +489,7 @@ void wd_agg_free_sess(handle_t h_sess)
 	free(sess->agg_conf.cols_info);
 	free(sess->key_conf.data_size);
 
-	if (sess->ops.sess_uninit)
-		sess->ops.sess_uninit(wd_agg_setting.driver, sess->priv);
+	wd_agg_uninit_sess_priv(sess);
 	if (sess->sched_key)
 		free(sess->sched_key);
 
@@ -509,8 +539,11 @@ static int wd_agg_check_sess_state(struct wd_agg_sess *sess, enum wd_agg_sess_st
 int wd_agg_set_hash_table(handle_t h_sess, struct wd_dae_hash_table *info)
 {
 	struct wd_agg_sess *sess = (struct wd_agg_sess *)h_sess;
+	struct wd_ctx_config_internal *config = &wd_agg_setting.config;
 	struct wd_dae_hash_table *hash_table, *rehash_table;
 	enum wd_agg_sess_state expected;
+	struct wd_agg_ops *eops;
+	__u32 i;
 	int ret;
 
 	if (!sess || !info) {
@@ -551,16 +584,22 @@ int wd_agg_set_hash_table(handle_t h_sess, struct wd_dae_hash_table *info)
 	memcpy(rehash_table, hash_table, sizeof(struct wd_dae_hash_table));
 	memcpy(hash_table, info, sizeof(struct wd_dae_hash_table));
 
-	if (sess->ops.hash_table_init) {
-		ret = sess->ops.hash_table_init(wd_agg_setting.driver, hash_table, sess->priv);
-		if (ret) {
+	for (i = 0; i < config->ctx_num; i++) {
+		/* At this point, extends_ops has completed its initialization process. */
+		eops = config->ctxs[i].extend_ops;
+		if (!eops)
+			continue;
+
+		/* Any single execution successful, exit immediately. */
+		if (eops->hash_table_init) {
+			ret = eops->hash_table_init(config->ctxs[i].drv, hash_table, sess->priv);
+			if (!ret)
+				return WD_SUCCESS;
+
 			memcpy(hash_table, rehash_table, sizeof(struct wd_dae_hash_table));
 			memset(rehash_table, 0, sizeof(struct wd_dae_hash_table));
-			goto out;
 		}
 	}
-
-	return WD_SUCCESS;
 
 out:
 	__atomic_store_n(&sess->state, expected, __ATOMIC_RELEASE);
@@ -595,15 +634,10 @@ static int wd_agg_alg_init(struct wd_ctx_config *config, struct wd_sched *sched)
 	if (ret < 0)
 		goto out_clear_sched;
 
-	ret = wd_alg_init_driver(&wd_agg_setting.config, wd_agg_setting.driver,
-				 &wd_agg_setting.priv);
-	if (ret)
-		goto out_clear_pool;
+	wd_agg_setting.priv = STATUS_ENABLE;
 
 	return WD_SUCCESS;
 
-out_clear_pool:
-	wd_uninit_async_request_pool(&wd_agg_setting.pool);
 out_clear_sched:
 	wd_clear_sched(&wd_agg_setting.sched);
 out_clear_ctx_config:
@@ -621,12 +655,9 @@ static int wd_agg_alg_uninit(void)
 
 	/* Uninit async request pool */
 	wd_uninit_async_request_pool(&wd_agg_setting.pool);
-
 	/* Unset config, sched, driver */
 	wd_clear_sched(&wd_agg_setting.sched);
-
-	wd_alg_uninit_driver(&wd_agg_setting.config, wd_agg_setting.driver,
-			     &wd_agg_setting.priv);
+	wd_agg_setting.priv = NULL;
 
 	return WD_SUCCESS;
 }
@@ -664,20 +695,12 @@ int wd_agg_init(char *alg, __u32 sched_type, int task_type, struct wd_ctx_params
 	while (ret != 0) {
 		memset(&wd_agg_setting.config, 0, sizeof(struct wd_ctx_config_internal));
 
-		/* Get alg driver and dev name */
-		wd_agg_setting.driver = wd_alg_drv_bind(task_type, alg);
-		if (!wd_agg_setting.driver) {
-			WD_ERR("failed to bind %s driver.\n", alg);
-			goto out_dlopen;
-		}
-
+		/* Init ctx param and prepare for ctx request */
 		agg_ctx_params.ctx_set_num = &agg_ctx_num;
-		ret = wd_ctx_param_init(&agg_ctx_params, ctx_params, wd_agg_setting.driver,
+		ret = wd_ctx_param_init_nw(&agg_ctx_params, ctx_params, alg, task_type,
 					WD_AGG_TYPE, 1);
 		if (ret) {
 			if (ret == -WD_EAGAIN) {
-				wd_disable_drv(wd_agg_setting.driver);
-				wd_alg_drv_unbind(wd_agg_setting.driver);
 				continue;
 			}
 			goto out_driver;
@@ -685,15 +708,13 @@ int wd_agg_init(char *alg, __u32 sched_type, int task_type, struct wd_ctx_params
 
 		(void)strcpy(wd_agg_init_attrs.alg, alg);
 		wd_agg_init_attrs.sched_type = sched_type;
-		wd_agg_init_attrs.driver = wd_agg_setting.driver;
+		wd_agg_init_attrs.task_type = task_type;
 		wd_agg_init_attrs.ctx_params = &agg_ctx_params;
 		wd_agg_init_attrs.alg_init = wd_agg_alg_init;
 		wd_agg_init_attrs.alg_poll_ctx = wd_agg_poll_ctx;
 		ret = wd_alg_attrs_init(&wd_agg_init_attrs);
 		if (ret) {
 			if (ret == -WD_ENODEV) {
-				wd_disable_drv(wd_agg_setting.driver);
-				wd_alg_drv_unbind(wd_agg_setting.driver);
 				wd_ctx_param_uninit(&agg_ctx_params);
 				continue;
 			}
@@ -701,17 +722,27 @@ int wd_agg_init(char *alg, __u32 sched_type, int task_type, struct wd_ctx_params
 			goto out_params_uninit;
 		}
 	}
+	ret = wd_ctx_drv_config(alg, &wd_agg_setting.config);
+	if (ret)
+		goto out_uninit_nolock;
+
+	ret = wd_alg_init_driver_nw(&wd_agg_setting.config);
+	if (ret)
+		goto out_drv_deconfig;
 
 	wd_alg_set_init(&wd_agg_setting.status);
 	wd_ctx_param_uninit(&agg_ctx_params);
 
 	return WD_SUCCESS;
 
+out_drv_deconfig:
+	wd_ctx_drv_deconfig(&wd_agg_setting.config);
+out_uninit_nolock:
+	wd_agg_alg_uninit();
+	wd_alg_attrs_uninit(&wd_agg_init_attrs);
 out_params_uninit:
 	wd_ctx_param_uninit(&agg_ctx_params);
 out_driver:
-	wd_alg_drv_unbind(wd_agg_setting.driver);
-out_dlopen:
 	wd_agg_close_driver();
 out_uninit:
 	wd_alg_clear_init(&wd_agg_setting.status);
@@ -726,8 +757,10 @@ void wd_agg_uninit(void)
 	if (ret)
 		return;
 
+	wd_alg_uninit_driver_nw(&wd_agg_setting.config);
+	wd_ctx_drv_deconfig(&wd_agg_setting.config);
 	wd_alg_attrs_uninit(&wd_agg_init_attrs);
-	wd_alg_drv_unbind(wd_agg_setting.driver);
+
 	wd_agg_close_driver();
 	wd_alg_clear_init(&wd_agg_setting.status);
 }
@@ -1099,8 +1132,8 @@ static int wd_agg_sync_job(struct wd_agg_sess *sess, struct wd_agg_req *req,
 	wd_dfx_msg_cnt(config, WD_CTX_CNT_NUM, idx);
 	ctx = config->ctxs + idx;
 
-	msg_handle.send = wd_agg_setting.driver->send;
-	msg_handle.recv = wd_agg_setting.driver->recv;
+	msg_handle.send = ctx->drv->send;
+	msg_handle.recv = ctx->drv->recv;
 
 	pthread_spin_lock(&ctx->lock);
 	ret = wd_handle_msg_sync(&msg_handle, ctx->ctx, msg, NULL, config->epoll_en);
@@ -1204,7 +1237,7 @@ static int wd_agg_async_job(struct wd_agg_sess *sess, struct wd_agg_req *req, bo
 	else
 		fill_request_msg_output(msg, req, sess, false);
 	msg->tag = msg_id;
-	ret = wd_agg_setting.driver->send(ctx->ctx, msg);
+	ret = ctx->drv->send(ctx->ctx, msg);
 	if (unlikely(ret < 0)) {
 		if (ret != -WD_EBUSY)
 			WD_ERR("wd agg async send err!\n");
@@ -1543,7 +1576,7 @@ static int wd_agg_poll_ctx(__u32 idx, __u32 expt, __u32 *count)
 	ctx = config->ctxs + idx;
 
 	do {
-		ret = wd_agg_setting.driver->recv(ctx->ctx, &resp_msg);
+		ret = ctx->drv->recv(ctx->ctx, &resp_msg);
 		if (ret == -WD_EAGAIN) {
 			return ret;
 		} else if (unlikely(ret < 0)) {
