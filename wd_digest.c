@@ -730,8 +730,8 @@ int wd_do_digest_async(handle_t h_sess, struct wd_digest_req *req)
 	msg_id = wd_get_msg_from_pool(&wd_digest_setting.pool, idx,
 				   (void **)&msg);
 	if (unlikely(msg_id < 0)) {
-		WD_ERR("failed to get msg from pool!\n");
-		return msg_id;
+		//WD_ERR("failed to get msg from pool!\n");
+		return -WD_EBUSY;
 	}
 
 	fill_request_msg(msg, req, dsess);
