@@ -1323,6 +1323,7 @@ static int wd_sched_fill_table(struct wd_env_config_per_numa *config_numa,
 		param.type = i;
 		param.begin = ctx_table[mode][i].begin;
 		param.end = ctx_table[mode][i].end;
+		param.ctx_prop = UADK_CTX_HW;
 		ret = wd_sched_rr_instance(sched, &param);
 		if (ret)
 			return ret;
@@ -2003,6 +2004,7 @@ static int wd_ctx_init_driver(struct wd_ctx_config_internal *config,
 	void *priv = ctx_config->drv_priv;
 	int ret;
 
+	WD_ERR("debug: call function: %s!\n", __func__);
 	if (!driver)
 		return 0;
 
@@ -2057,7 +2059,8 @@ static void wd_ctx_uninit_driver(struct wd_ctx_config_internal *config,
 	struct wd_alg_driver *driver = ctx_config->drv;
 	void *priv = ctx_config->drv_priv;
 
-	if (!driver)
+	WD_ERR("debug: call function: %s!\n", __func__);
+	if (!driver || !priv)
 		return;
 
 	/* Prevent repeated uninitialization */
