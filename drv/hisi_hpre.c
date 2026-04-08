@@ -1577,7 +1577,7 @@ static int u_is_in_p(struct wd_ecc_msg *msg)
 static int ecc_prepare_in(struct wd_ecc_msg *msg,
 			  struct hisi_hpre_sqe *hw_msg, void **data)
 {
-	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)msg->drv_cfg;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)msg->priv;
 	int ret = -WD_EINVAL;
 
 	switch (msg->req.op_type) {
@@ -2873,10 +2873,7 @@ static int hpre_ecc_get_extend_ops(void *ops)
 	if (!ecc_ops)
 		return -WD_EINVAL;
 
-	ecc_ops->params = NULL;
-	ecc_ops->sess_init = NULL;
 	ecc_ops->eops_params_cfg = ecc_sess_eops_params_cfg;
-	ecc_ops->sess_uninit = NULL;
 	return WD_SUCCESS;
 }
 
