@@ -190,6 +190,9 @@ struct wd_sched {
 				  void *sched_key,
 				  const int sched_mode);
 	int (*poll_policy)(handle_t h_sched_ctx, __u32 expect, __u32 *count);
+	void (*set_param)(handle_t h_sched_ctx,
+				  void *sched_key,
+				  void *sched_param);
 	handle_t h_sched_ctx;
 };
 

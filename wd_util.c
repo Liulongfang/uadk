@@ -320,7 +320,7 @@ err_shm_del:
 
 int wd_init_sched(struct wd_sched *in, struct wd_sched *from)
 {
-	if (!from->name || !from->sched_init ||
+	if (!from->name || !from->sched_init || !from->set_param ||
 	    !from->pick_next_ctx || !from->poll_policy) {
 		WD_ERR("invalid: member of wd_sched is NULL!\n");
 		return -WD_EINVAL;
@@ -331,6 +331,7 @@ int wd_init_sched(struct wd_sched *in, struct wd_sched *from)
 	in->sched_init = from->sched_init;
 	in->pick_next_ctx = from->pick_next_ctx;
 	in->poll_policy = from->poll_policy;
+	in->set_param = from->set_param;
 
 	return 0;
 }
@@ -346,6 +347,7 @@ void wd_clear_sched(struct wd_sched *in)
 	in->sched_init = NULL;
 	in->pick_next_ctx = NULL;
 	in->poll_policy = NULL;
+	in->set_param = NULL;
 }
 
 void wd_clear_ctx_config(struct wd_ctx_config_internal *in)

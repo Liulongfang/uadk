@@ -41,12 +41,19 @@ struct sched_key {
 	__u8 mode;
 	__u32 dev_id;
 	__u8 ctx_prop;
+	__u16 is_stream;
+	__u16 prio_mode;
+	__u32 pkt_size;
 	__u16 sync_ctxid[UADK_CTX_MAX];
 	__u16 async_ctxid[UADK_CTX_MAX];
+	__u16 def_sync_ctxid;
+	__u16 def_async_ctxid;
 	struct wd_sched_balancer balancer;
 
 };
-#define LOOP_SWITH_TIME	5
+#define LOOP_SWITH_STEP	1
+#define LOOP_SWITH_SLICE	10
+#define UADK_SWITH_PKT_SZ		2048
 
 /*
  * struct sched_ctx_range - define one ctx pos.
@@ -816,10 +823,11 @@ static handle_t loop_sched_init(handle_t h_sched_ctx, void *sched_param)
 	skey->sync_ctxid[UADK_CTX_CE_INS] = loop_sched_init_ctx(sched_ctx, skey, CTX_MODE_SYNC);
 	skey->async_ctxid[UADK_CTX_CE_INS] = loop_sched_init_ctx(sched_ctx, skey, CTX_MODE_ASYNC);
 	skey->ctx_prop = ctx_prop;
-	if (skey->sync_ctxid[1] == INVALID_POS && skey->async_ctxid[1] == INVALID_POS) {
+	if (skey->sync_ctxid[UADK_CTX_CE_INS] == INVALID_POS &&
+	     skey->async_ctxid[UADK_CTX_CE_INS] == INVALID_POS) {
 		WD_ERR("failed to get valid CE sync_ctxid or async_ctxid!\n");
-		skey->sync_ctxid[1] = skey->sync_ctxid[0];
-		skey->async_ctxid[1] = skey->async_ctxid[0];
+		skey->sync_ctxid[UADK_CTX_CE_INS] = skey->sync_ctxid[0];
+		skey->async_ctxid[UADK_CTX_CE_INS] = skey->async_ctxid[0];
 	}
 
 	WD_ERR("sw ctxid is: %u, %u!\n", skey->sync_ctxid[1], skey->async_ctxid[1]);
@@ -829,6 +837,25 @@ static handle_t loop_sched_init(handle_t h_sched_ctx, void *sched_param)
 out:
 	free(skey);
 	return (handle_t)(-WD_EINVAL);
+}
+
+static __u32 wd_sched_special_pick(struct sched_key *key, int sched_mode)
+{
+	if (key->is_stream) {
+		if (key->pkt_size < UADK_SWITH_PKT_SZ) {
+			if (sched_mode == CTX_MODE_SYNC)
+				return key->sync_ctxid[UADK_CTX_CE_INS];
+			else
+				return key->async_ctxid[UADK_CTX_CE_INS];
+		} else {
+			if (sched_mode == CTX_MODE_SYNC)
+				return key->sync_ctxid[UADK_CTX_HW];
+			else
+				return key->async_ctxid[UADK_CTX_HW];
+		}
+	}
+
+	return INVALID_POS;
 }
 
 /*
@@ -855,31 +882,43 @@ static __u32 loop_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 	     key->async_ctxid[UADK_CTX_HW] == INVALID_POS)
 		return session_sched_pick_next_ctx(h_sched_ctx, sched_key, sched_mode);
 
+	if (key->is_stream)
+		return wd_sched_special_pick(key, sched_mode);
+
+	// Small packets go directly through instruction acceleration
+	if (key->pkt_size != 0 && key->pkt_size < UADK_SWITH_PKT_SZ) {
+		if (sched_mode == CTX_MODE_SYNC)
+			return key->sync_ctxid[UADK_CTX_CE_INS];
+		else
+			return key->async_ctxid[UADK_CTX_CE_INS];
+	}
+
 	if (sched_mode == CTX_MODE_SYNC) {
-		if (balancer->switch_slice == LOOP_SWITH_TIME) {
+		if (balancer->switch_slice == LOOP_SWITH_SLICE) {
 			balancer->switch_slice = 0;
-			balancer->hw_dfx_num++;
+			balancer->hw_dfx_num += LOOP_SWITH_STEP;
 			/* run in HW */
-			return key->sync_ctxid[UADK_CTX_HW];
+			key->def_sync_ctxid = key->sync_ctxid[UADK_CTX_HW];
 		} else {
 			balancer->switch_slice++;
 			/* run  in soft CE */
-			balancer->sw_dfx_num++;
-			return key->sync_ctxid[UADK_CTX_CE_INS];
+			balancer->sw_dfx_num += LOOP_SWITH_STEP;
+			key->def_sync_ctxid = key->sync_ctxid[UADK_CTX_CE_INS];
 		}
+		return key->def_sync_ctxid;
 	}
 	// Async mode
-	if (balancer->hw_task_num > balancer->sw_task_num >> 1) {
+	if (balancer->hw_task_num > balancer->sw_task_num) {
 		/* run	in soft CE */
-		balancer->sw_task_num++;
-
-		return key->async_ctxid[UADK_CTX_CE_INS];
+		balancer->sw_task_num += LOOP_SWITH_STEP >> 1;
+		key->def_async_ctxid = key->async_ctxid[UADK_CTX_CE_INS];
 	} else {
 		/* run in HW */
-		balancer->hw_task_num++;
-
-		return key->async_ctxid[UADK_CTX_HW];
+		balancer->hw_task_num += LOOP_SWITH_STEP >> 2;
+		key->def_async_ctxid = key->async_ctxid[UADK_CTX_HW];
 	}
+
+	return key->def_async_ctxid;
 }
 
 static int loop_poll_policy_rr(struct wd_sched_ctx *sched_ctx, int numa_id,
@@ -1069,6 +1108,8 @@ static handle_t skey_sched_init(handle_t h_sched_ctx, void *sched_param)
 	}
 
 	sched_skey_param_init(sched_ctx, skey);
+	skey->def_sync_ctxid = skey->sync_ctxid[UADK_CTX_CE_INS];
+	skey->def_async_ctxid = skey->async_ctxid[UADK_CTX_CE_INS];
 	WD_ERR("sw ctxid is: %u, %u!\n", skey->sync_ctxid[1], skey->async_ctxid[1]);
 
 	return (handle_t)skey;
@@ -1100,30 +1141,44 @@ static __u32 skey_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 	     skey->async_ctxid[UADK_CTX_HW] == INVALID_POS)
 		return session_sched_pick_next_ctx(h_sched_ctx, sched_key, sched_mode);
 
-	// Async mode
-	if (sched_mode == CTX_MODE_ASYNC) {
-		if (skey->balancer.hw_task_num > (skey->balancer.sw_task_num >> 1)) {
-			/* run	in soft CE */
-			skey->balancer.sw_task_num++;
+	if (skey->is_stream)
+		return wd_sched_special_pick(skey, sched_mode);
+
+	// Small packets go directly through instruction acceleration
+	if (skey->pkt_size != 0 && skey->pkt_size < UADK_SWITH_PKT_SZ) {
+		if (sched_mode == CTX_MODE_SYNC)
+			return skey->sync_ctxid[UADK_CTX_CE_INS];
+		else
 			return skey->async_ctxid[UADK_CTX_CE_INS];
-		 } else {
-			/* run in HW */
-			skey->balancer.hw_task_num++;
-			return skey->async_ctxid[UADK_CTX_HW];
-		 }
 	}
 
-	if (skey->balancer.switch_slice == LOOP_SWITH_TIME) {
+	// Async mode
+	if (sched_mode == CTX_MODE_ASYNC) {
+		if (skey->balancer.hw_task_num > (1024 + skey->balancer.sw_task_num >> 1)) {
+			/* run	in soft CE */
+			skey->balancer.sw_task_num += LOOP_SWITH_STEP;
+			skey->def_async_ctxid = skey->async_ctxid[UADK_CTX_CE_INS];
+		 } else {
+			/* run in HW */
+			skey->balancer.hw_task_num += LOOP_SWITH_STEP;
+			skey->def_async_ctxid = skey->async_ctxid[UADK_CTX_HW];
+		 }
+		 return skey->def_async_ctxid;
+	}
+
+	if (skey->balancer.switch_slice >= LOOP_SWITH_SLICE) {
 		skey->balancer.switch_slice = 0;
-		skey->balancer.hw_dfx_num++;
+		skey->balancer.hw_dfx_num += LOOP_SWITH_STEP >> 1;
 		/* run in HW */
-		return skey->sync_ctxid[UADK_CTX_HW];
+		skey->def_sync_ctxid = skey->sync_ctxid[UADK_CTX_HW];
 	} else {
 		skey->balancer.switch_slice++;
-		skey->balancer.sw_dfx_num++;
+		skey->balancer.sw_dfx_num += LOOP_SWITH_STEP >> 2;
 		/* run  in soft CE */
-		return skey->sync_ctxid[UADK_CTX_CE_INS];
+		skey->def_sync_ctxid = skey->sync_ctxid[UADK_CTX_CE_INS];
 	}
+
+	return skey->def_sync_ctxid;
 }
 
 static int skey_poll_ctx(struct wd_sched_ctx *sched_ctx, struct sched_key *skey,
@@ -1343,6 +1398,23 @@ static int instr_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 	return ret;
 }
 
+static void wd_sched_set_param(handle_t h_sched_ctx,
+			void *sched_key, void *sched_param)
+{
+	struct wd_sched_params *params = (struct wd_sched_params *)sched_param;
+	struct sched_key *skey = (struct sched_key *)sched_key;
+
+	skey->pkt_size = params->pkt_size;
+	skey->is_stream = params->data_mode;
+	skey->prio_mode = params->prio_mode;
+}
+
+static void none_set_param(handle_t h_sched_ctx,
+			void *sched_key, void *sched_param)
+{
+	return;
+}
+
 static struct wd_sched sched_table[SCHED_POLICY_BUTT] = {
 	{
 		.name = "RR scheduler",
@@ -1350,42 +1422,49 @@ static struct wd_sched sched_table[SCHED_POLICY_BUTT] = {
 		.sched_init = session_sched_init,
 		.pick_next_ctx = session_sched_pick_next_ctx,
 		.poll_policy = session_sched_poll_policy,
+		.set_param = wd_sched_set_param,
 	}, {
 		.name = "None scheduler",
 		.sched_policy = SCHED_POLICY_NONE,
 		.sched_init = sched_none_init,
 		.pick_next_ctx = sched_none_pick_next_ctx,
 		.poll_policy = sched_none_poll_policy,
+		.set_param = wd_sched_set_param,
 	}, {
 		.name = "Single scheduler",
 		.sched_policy = SCHED_POLICY_SINGLE,
 		.sched_init = sched_single_init,
 		.pick_next_ctx = sched_single_pick_next_ctx,
 		.poll_policy = sched_single_poll_policy,
+		.set_param = wd_sched_set_param,
 	}, {
 		.name = "Device RR scheduler",
 		.sched_policy = SCHED_POLICY_DEV,
 		.sched_init = session_dev_sched_init,
 		.pick_next_ctx = session_sched_pick_next_ctx,
 		.poll_policy = session_sched_poll_policy,
+		.set_param = wd_sched_set_param,
 	}, {
 		.name = "Loop scheduler",
 		.sched_policy = SCHED_POLICY_LOOP,
 		.sched_init = loop_sched_init,
 		.pick_next_ctx = loop_sched_pick_next_ctx,
 		.poll_policy = loop_sched_poll_policy,
+		.set_param = wd_sched_set_param,
 	}, {
 		.name = "Hungry scheduler",
 		.sched_policy = SCHED_POLICY_HUNGRY,
 		.sched_init = skey_sched_init,
 		.pick_next_ctx = skey_sched_pick_next_ctx,
 		.poll_policy = skey_sched_poll_policy,
+		.set_param = wd_sched_set_param,
 	},  {
 		.name = "Instr scheduler",
 		.sched_policy = SCHED_POLICY_INSTR,
 		.sched_init = instr_sched_init,
 		.pick_next_ctx = instr_sched_pick_next_ctx,
 		.poll_policy = instr_sched_poll_policy,
+		.set_param = wd_sched_set_param,
 	},
 };
 
@@ -1549,12 +1628,8 @@ int wd_sched_rr_instance(const struct wd_sched *sched, struct sched_params *para
 	if (sched_ctx->policy == SCHED_POLICY_DEV)
 		return wd_instance_dev_region(sched_ctx, param);
 
-	if (param->ctx_prop > UADK_CTX_SOFT) {
-		WD_ERR("invalid: sched_ctx's prop is %d\n", param->ctx_prop);
-		return -WD_EINVAL;
-	}
 	/* For older tools, the default setting is of the HW type. */
-	if (param->ctx_prop < 0)
+	if (param->ctx_prop < 0 || param->ctx_prop > UADK_CTX_SOFT)
 		param->ctx_prop = UADK_CTX_HW;
 
 	if (!sched_ctx->sched_info[numa_id].ctx_region[mode]) {
@@ -1776,6 +1851,7 @@ simple_ok:
 	sched->poll_policy = sched_table[sched_type].poll_policy;
 	sched->sched_policy = sched_type;
 	sched->name = sched_table[sched_type].name;
+	sched->set_param = sched_table[sched_type].set_param;
 
 	return sched;
 
