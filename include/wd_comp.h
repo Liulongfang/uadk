@@ -135,7 +135,8 @@ void wd_comp_uninit(void);
  *
  * Return 0 if succeed and others if fail.
  */
-int wd_comp_init2_(char *alg, __u32 sched_type, int task_type, struct wd_ctx_params *ctx_params);
+int wd_comp_init2_(const char *alg, __u32 sched_type, int task_type,
+		   struct wd_ctx_params *ctx_params);
 
 #define wd_comp_init2(alg, sched_type, task_type) \
 	wd_comp_init2_(alg, sched_type, task_type, NULL)
