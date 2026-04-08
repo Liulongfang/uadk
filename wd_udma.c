@@ -21,7 +21,6 @@ static struct wd_udma_setting {
 	struct wd_ctx_config_internal config;
 	struct wd_sched sched;
 	struct wd_async_msg_pool pool;
-	struct wd_alg_driver *driver;
 	void *priv;
 	void *dlhandle;
 	void *dlh_list;
@@ -35,7 +34,6 @@ static void wd_udma_close_driver(void)
 	wd_dlclose_drv(wd_udma_setting.dlh_list);
 	wd_udma_setting.dlh_list = NULL;
 #else
-	wd_release_drv(wd_udma_setting.driver);
 	hisi_udma_remove();
 #endif
 }
@@ -227,8 +225,8 @@ int wd_do_udma_sync(handle_t h_sess, struct wd_udma_req *req)
 
 	fill_udma_msg(&msg, req);
 
-	msg_handle.send = wd_udma_setting.driver->send;
-	msg_handle.recv = wd_udma_setting.driver->recv;
+	msg_handle.send = ctx->drv->send;
+	msg_handle.recv = ctx->drv->recv;
 	pthread_spin_lock(&ctx->lock);
 	ret = wd_handle_msg_sync(&msg_handle, ctx->ctx,
 				 &msg, NULL, wd_udma_setting.config.epoll_en);
@@ -277,7 +275,7 @@ int wd_do_udma_async(handle_t sess, struct wd_udma_req *req)
 	fill_udma_msg(msg, req);
 	msg->tag = mid;
 
-	ret = wd_udma_setting.driver->send(ctx->ctx, msg);
+	ret = ctx->drv->send(ctx->ctx, msg);
 	if (unlikely(ret)) {
 		if (ret != -WD_EBUSY)
 			WD_ERR("failed to send udma BD, hw is err!\n");
@@ -315,7 +313,7 @@ static int wd_udma_poll_ctx(__u32 idx, __u32 expt, __u32 *count)
 	ctx = config->ctxs + idx;
 
 	do {
-		ret = wd_udma_setting.driver->recv(ctx->ctx, &rcv_msg);
+		ret = ctx->drv->recv(ctx->ctx, &rcv_msg);
 		if (ret == -WD_EAGAIN) {
 			return ret;
 		} else if (unlikely(ret)) {
@@ -365,9 +363,7 @@ static void wd_udma_alg_uninit(void)
 	wd_uninit_async_request_pool(&wd_udma_setting.pool);
 	/* Unset config, sched, driver */
 	wd_clear_sched(&wd_udma_setting.sched);
-	wd_alg_uninit_driver(&wd_udma_setting.config,
-						 wd_udma_setting.driver,
-						 &wd_udma_setting.priv);
+	wd_udma_setting.priv = NULL;
 }
 
 void wd_udma_uninit(void)
@@ -378,10 +374,14 @@ void wd_udma_uninit(void)
 	if (status == WD_UNINIT)
 		return;
 
+	wd_alg_uninit_driver_nw(&wd_udma_setting.config);
+	wd_ctx_drv_deconfig(&wd_udma_setting.config);
+
 	wd_udma_alg_uninit();
 	wd_alg_attrs_uninit(&wd_udma_init_attrs);
-	wd_alg_drv_unbind(wd_udma_setting.driver);
+
 	wd_udma_close_driver();
+	wd_udma_setting.dlh_list = NULL;
 	wd_alg_clear_init(&wd_udma_setting.status);
 }
 
@@ -408,16 +408,10 @@ static int wd_udma_alg_init(struct wd_ctx_config *config, struct wd_sched *sched
 	if (ret < 0)
 		goto out_clear_sched;
 
-	ret = wd_alg_init_driver(&wd_udma_setting.config,
-						     wd_udma_setting.driver,
-							 &wd_udma_setting.priv);
-	if (ret)
-		goto out_clear_pool;
+	wd_udma_setting.priv = STATUS_ENABLE;
 
 	return WD_SUCCESS;
 
-out_clear_pool:
-	wd_uninit_async_request_pool(&wd_udma_setting.pool);
 out_clear_sched:
 	wd_clear_sched(&wd_udma_setting.sched);
 out_clear_ctx_config:
@@ -456,21 +450,12 @@ int wd_udma_init(const char *alg, __u32 sched_type, int task_type,
 	while (ret) {
 		memset(&wd_udma_setting.config, 0, sizeof(struct wd_ctx_config_internal));
 
-		/* Get alg driver and dev name */
-		wd_udma_setting.driver = wd_alg_drv_bind(task_type, alg);
-		if (!wd_udma_setting.driver) {
-			WD_ERR("fail to bind a valid driver.\n");
-			ret = -WD_EINVAL;
-			goto out_dlopen;
-		}
-
+		/* Init ctx param and prepare for ctx request */
 		udma_ctx_params.ctx_set_num = udma_ctx_num;
-		ret = wd_ctx_param_init(&udma_ctx_params, ctx_params,
-					wd_udma_setting.driver, WD_UDMA_TYPE, WD_UDMA_OP_MAX);
+		ret = wd_ctx_param_init_nw(&udma_ctx_params, ctx_params,
+					alg, task_type, WD_UDMA_TYPE, WD_UDMA_OP_MAX);
 		if (ret) {
 			if (ret == -WD_EAGAIN) {
-				wd_disable_drv(wd_udma_setting.driver);
-				wd_alg_drv_unbind(wd_udma_setting.driver);
 				continue;
 			}
 			goto out_driver;
@@ -478,15 +463,13 @@ int wd_udma_init(const char *alg, __u32 sched_type, int task_type,
 
 		(void)strcpy(wd_udma_init_attrs.alg, alg);
 		wd_udma_init_attrs.sched_type = sched_type;
-		wd_udma_init_attrs.driver = wd_udma_setting.driver;
+		wd_udma_init_attrs.task_type = task_type;
 		wd_udma_init_attrs.ctx_params = &udma_ctx_params;
 		wd_udma_init_attrs.alg_init = wd_udma_alg_init;
 		wd_udma_init_attrs.alg_poll_ctx = wd_udma_poll_ctx;
 		ret = wd_alg_attrs_init(&wd_udma_init_attrs);
 		if (ret) {
 			if (ret == -WD_ENODEV) {
-				wd_disable_drv(wd_udma_setting.driver);
-				wd_alg_drv_unbind(wd_udma_setting.driver);
 				wd_ctx_param_uninit(&udma_ctx_params);
 				continue;
 			}
@@ -495,16 +478,27 @@ int wd_udma_init(const char *alg, __u32 sched_type, int task_type,
 		}
 	}
 
+	ret = wd_ctx_drv_config(alg, &wd_udma_setting.config);
+	if (ret)
+		goto out_uninit_nolock;
+
+	ret = wd_alg_init_driver_nw(&wd_udma_setting.config);
+	if (ret)
+		goto out_drv_deconfig;
+
 	wd_alg_set_init(&wd_udma_setting.status);
 	wd_ctx_param_uninit(&udma_ctx_params);
 
 	return WD_SUCCESS;
 
+out_drv_deconfig:
+	wd_ctx_drv_deconfig(&wd_udma_setting.config);
+out_uninit_nolock:
+	wd_udma_alg_uninit();
+	wd_alg_attrs_uninit(&wd_udma_init_attrs);
 out_params_uninit:
 	wd_ctx_param_uninit(&udma_ctx_params);
 out_driver:
-	wd_alg_drv_unbind(wd_udma_setting.driver);
-out_dlopen:
 	wd_udma_close_driver();
 out_clear_init:
 	wd_alg_clear_init(&wd_udma_setting.status);
