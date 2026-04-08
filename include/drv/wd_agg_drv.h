@@ -43,8 +43,7 @@ struct wd_agg_msg {
 
 struct wd_agg_ops {
 	int (*get_row_size)(struct wd_alg_driver *drv, void *priv);
-	int (*sess_init)(struct wd_alg_driver *drv,
-			 struct wd_agg_sess_setup *setup, void **priv);
+	int (*sess_init)(struct wd_agg_sess_setup *setup, void **priv);
 	void (*sess_uninit)(struct wd_alg_driver *drv, void *priv);
 	int (*hash_table_init)(struct wd_alg_driver *drv,
 			       struct wd_dae_hash_table *hash_table, void *priv);

@@ -410,13 +410,12 @@ static void wd_join_gather_uninit_sess(struct wd_join_gather_sess *sess)
 		free(sess->gather_conf.batch_row_size);
 
 	if (sess->ops.sess_uninit)
-		sess->ops.sess_uninit(wd_join_gather_setting.driver, sess->priv);
+		sess->ops.sess_uninit(sess->priv);
 }
 
 static int wd_join_gather_init_sess(struct wd_join_gather_sess *sess,
 				    struct wd_join_gather_sess_setup *setup)
 {
-	struct wd_alg_driver *drv = wd_join_gather_setting.driver;
 	__u32 array_size;
 	int ret;
 
@@ -425,7 +424,7 @@ static int wd_join_gather_init_sess(struct wd_join_gather_sess *sess,
 			WD_ERR("failed to get session uninit ops!\n");
 			return -WD_EINVAL;
 		}
-		ret = sess->ops.sess_init(drv, setup, &sess->priv);
+		ret = sess->ops.sess_init(setup, &sess->priv);
 		if (ret) {
 			WD_ERR("failed to init session priv!\n");
 			return ret;
@@ -433,7 +432,7 @@ static int wd_join_gather_init_sess(struct wd_join_gather_sess *sess,
 	}
 
 	if (sess->ops.get_table_row_size && setup->alg != WD_GATHER) {
-		ret = sess->ops.get_table_row_size(drv, sess->priv);
+		ret = sess->ops.get_table_row_size(sess->priv);
 		if (ret <= 0) {
 			WD_ERR("failed to get hash table row size: %d!\n", ret);
 			goto uninit;
@@ -447,7 +446,7 @@ static int wd_join_gather_init_sess(struct wd_join_gather_sess *sess,
 		if (!sess->gather_conf.batch_row_size)
 			goto uninit;
 
-		ret = sess->ops.get_batch_row_size(drv, sess->priv,
+		ret = sess->ops.get_batch_row_size(sess->priv,
 						   sess->gather_conf.batch_row_size,
 						   array_size);
 		if (ret) {
@@ -462,7 +461,7 @@ free_batch:
 	free(sess->gather_conf.batch_row_size);
 uninit:
 	if (sess->ops.sess_uninit)
-		sess->ops.sess_uninit(drv, sess->priv);
+		sess->ops.sess_uninit(sess->priv);
 	return -WD_EINVAL;
 }
 
@@ -656,8 +655,7 @@ int wd_join_set_hash_table(handle_t h_sess, struct wd_dae_hash_table *info)
 		WD_INFO("info: extern hash table is NULL!\n");
 
 	if (sess->ops.hash_table_init) {
-		ret = sess->ops.hash_table_init(wd_join_gather_setting.driver,
-						info, sess->priv);
+		ret = sess->ops.hash_table_init(info, sess->priv);
 		if (ret)
 			goto out;
 	}
@@ -699,7 +697,9 @@ static int wd_join_gather_alg_init(struct wd_ctx_config *config, struct wd_sched
 	if (ret < 0)
 		goto out_clear_sched;
 
-	ret = wd_alg_init_driver(&wd_join_gather_setting.config, wd_join_gather_setting.driver);
+	ret = wd_alg_init_driver(&wd_join_gather_setting.config,
+					wd_join_gather_setting.driver,
+					&wd_join_gather_setting.priv);
 	if (ret)
 		goto out_clear_pool;
 
@@ -728,7 +728,9 @@ static int wd_join_gather_alg_uninit(void)
 	/* Unset config, sched, driver */
 	wd_clear_sched(&wd_join_gather_setting.sched);
 
-	wd_alg_uninit_driver(&wd_join_gather_setting.config, wd_join_gather_setting.driver);
+	wd_alg_uninit_driver(&wd_join_gather_setting.config,
+				  wd_join_gather_setting.driver,
+				  &wd_join_gather_setting.priv);
 
 	return WD_SUCCESS;
 }
@@ -1215,7 +1217,7 @@ static int wd_join_gather_sync_job(struct wd_join_gather_sess *sess,
 	msg_handle.recv = setting->driver->recv;
 
 	pthread_spin_lock(&ctx->lock);
-	ret = wd_handle_msg_sync(setting->driver, &msg_handle, ctx->ctx,
+	ret = wd_handle_msg_sync(&msg_handle, ctx->ctx,
 				 msg, NULL, config->epoll_en);
 	pthread_spin_unlock(&ctx->lock);
 
@@ -1311,7 +1313,7 @@ static int wd_join_gather_async_job(struct wd_join_gather_sess *sess,
 
 	fill_join_gather_msg(msg, req, sess);
 	msg->tag = msg_id;
-	ret = wd_alg_driver_send(setting->driver, ctx->ctx, msg);
+	ret = wd_join_gather_setting.driver->send(ctx->ctx, msg);
 	if (ret < 0) {
 		if (ret != -WD_EBUSY)
 			WD_ERR("wd join gather async send err!\n");
@@ -1781,7 +1783,7 @@ static int wd_join_gather_poll_ctx(__u32 idx, __u32 expt, __u32 *count)
 	ctx = config->ctxs + idx;
 
 	do {
-		ret = wd_alg_driver_recv(wd_join_gather_setting.driver, ctx->ctx, &resp_msg);
+		ret = wd_join_gather_setting.driver->recv(ctx->ctx, &resp_msg);
 		if (ret == -WD_EAGAIN) {
 			return ret;
 		} else if (ret < 0) {
