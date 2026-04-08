@@ -423,8 +423,8 @@ int wd_do_dh_async(handle_t sess, struct wd_dh_req *req)
 
 	mid = wd_get_msg_from_pool(&wd_dh_setting.pool, idx, (void **)&msg);
 	if (unlikely(mid < 0)) {
-		WD_ERR("failed to get msg from pool!\n");
-		return mid;
+		//WD_ERR("failed to get msg from pool!\n");
+		return -WD_EBUSY;
 	}
 
 	ret = fill_dh_msg(msg, req, (struct wd_dh_sess *)sess);

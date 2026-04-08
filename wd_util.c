@@ -3203,7 +3203,7 @@ int wd_alg_attrs_init(struct wd_init_attrs *attrs)
 			goto out_freesched;
 		}
 
-		WD_ERR("debug: call function: %s!\n", __func__);
+		WD_ERR("TASK_MIX: call function: %s!\n", __func__);
 		drv = wd_request_drv(alg_name, ALG_DRV_SOFT);
 		if (drv == NULL) {
 			WD_ERR("fail to find soft driver.\n");
@@ -3231,6 +3231,7 @@ int wd_alg_attrs_init(struct wd_init_attrs *attrs)
 			goto out_freesched;
 		}
 
+		WD_ERR("TASK_INSTR: call function: %s!\n", __func__);
 		drv = wd_request_drv(alg_name, ALG_DRV_SOFT);
 		if (drv == NULL) {
 			WD_ERR("fail to find soft driver.\n");

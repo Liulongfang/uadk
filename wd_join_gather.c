@@ -1321,8 +1321,8 @@ static int wd_join_gather_async_job(struct wd_join_gather_sess *sess,
 	ctx = config->ctxs + idx;
 	msg_id = wd_get_msg_from_pool(&setting->pool, idx, (void **)&msg);
 	if (msg_id < 0) {
-		WD_ERR("failed to get join gather msg from pool!\n");
-		return msg_id;
+		//WD_ERR("failed to get join gather msg from pool!\n");
+		return -WD_EBUSY;
 	}
 
 	fill_join_gather_msg(msg, req, sess);
