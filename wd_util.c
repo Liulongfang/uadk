@@ -2084,13 +2084,7 @@ static void wd_ctx_uninit_driver(struct wd_ctx_config_internal *config,
 	}
 }
 
-int wd_alg_init_driver(struct wd_ctx_config_internal *config,
-	struct wd_alg_driver *driver, void **drv_priv)
-{
-	return 0;
-}
-
-int wd_alg_init_driver_nw(struct wd_ctx_config_internal *config)
+int wd_alg_init_driver(struct wd_ctx_config_internal *config)
 {
 	__u32 i, j;
 	int ret;
@@ -2113,12 +2107,7 @@ init_err:
 	return ret;
 }
 
-void wd_alg_uninit_driver(struct wd_ctx_config_internal *config,
-	struct wd_alg_driver *driver, void **drv_priv)
-{
-}
-
-void wd_alg_uninit_driver_nw(struct wd_ctx_config_internal *config)
+void wd_alg_uninit_driver(struct wd_ctx_config_internal *config)
 {
 	__u32 i;
 
@@ -2253,61 +2242,6 @@ void wd_ctx_param_uninit(struct wd_ctx_params *ctx_params)
 
 int wd_ctx_param_init(struct wd_ctx_params *ctx_params,
 		      struct wd_ctx_params *user_ctx_params,
-		      struct wd_alg_driver *driver,
-		      enum wd_type type, int max_op_type)
-{
-	const char *env_name = wd_env_name[type];
-	const char *var_s;
-	int i, ret;
-
-	ctx_params->bmp = numa_allocate_nodemask();
-	if (!ctx_params->bmp) {
-		WD_ERR("fail to allocate nodemask.\n");
-		return -WD_ENOMEM;
-	}
-
-	/* Only hw driver support environment variable */
-	var_s = secure_getenv(env_name);
-	if (var_s && strlen(var_s) && driver->calc_type == UADK_ALG_HW) {
-		/* environment variable has the highest priority */
-		ret = wd_env_set_ctx_nums(driver->alg_name, env_name, var_s,
-					  ctx_params, max_op_type);
-		if (ret) {
-			WD_ERR("fail to init ctx nums from %s!\n", env_name);
-			numa_free_nodemask(ctx_params->bmp);
-			return ret;
-		}
-	} else {
-		/* environment variable is not set, try to use user_ctx_params first */
-		if (user_ctx_params) {
-			copy_bitmask_to_bitmask(user_ctx_params->bmp, ctx_params->bmp);
-			if (user_ctx_params->op_type_num > (__u32)max_op_type) {
-				WD_ERR("fail to check user op type numbers.\n");
-				numa_free_nodemask(ctx_params->bmp);
-				return -WD_EINVAL;
-			}
-			ctx_params->cap = user_ctx_params->cap;
-			ctx_params->ctx_set_num = user_ctx_params->ctx_set_num;
-			ctx_params->op_type_num = user_ctx_params->op_type_num;
-
-			return 0;
-		}
-	}
-
-	/* user_ctx_params is also not set, use defalut queue_num max_op_type */
-	numa_bitmask_setall(ctx_params->bmp);
-	for (i = 0; i < max_op_type; i++) {
-		ctx_params->ctx_set_num[i].sync_ctx_num = max_op_type;
-		ctx_params->ctx_set_num[i].async_ctx_num = max_op_type;
-	}
-
-	ctx_params->op_type_num = max_op_type;
-
-	return 0;
-}
-
-int wd_ctx_param_init_nw(struct wd_ctx_params *ctx_params,
-		      struct wd_ctx_params *user_ctx_params,
 		      char *alg, int task_type, enum wd_type type,
 		      int max_op_type)
 {
@@ -2335,38 +2269,27 @@ int wd_ctx_param_init_nw(struct wd_ctx_params *ctx_params,
 	} else {
 		/* environment variable is not set, try to use user_ctx_params first */
 		if (user_ctx_params) {
-			if (user_ctx_params->bmp) {
-				copy_bitmask_to_bitmask(user_ctx_params->bmp, ctx_params->bmp);
-			} else {
-				/* default value */
-				numa_bitmask_setall(ctx_params->bmp);
-			}
-			ctx_params->cap = user_ctx_params->cap;
-			ctx_params->ctx_set_num = user_ctx_params->ctx_set_num;
-			ctx_params->op_type_num = user_ctx_params->op_type_num;
-			if (ctx_params->op_type_num > (__u32)max_op_type) {
+			copy_bitmask_to_bitmask(user_ctx_params->bmp, ctx_params->bmp);
+			if (user_ctx_params->op_type_num > (__u32)max_op_type) {
 				WD_ERR("fail to check user op type numbers.\n");
 				numa_free_nodemask(ctx_params->bmp);
 				return -WD_EINVAL;
 			}
+			ctx_params->cap = user_ctx_params->cap;
+			ctx_params->ctx_set_num = user_ctx_params->ctx_set_num;
+			ctx_params->op_type_num = user_ctx_params->op_type_num;
 
 			return 0;
 		}
-
-		/* user_ctx_params is also not set, use driver's defalut queue_num */
-		numa_bitmask_setall(ctx_params->bmp);
-		for (i = 0; i < driver->op_type_num; i++) {
-			ctx_params->ctx_set_num[i].sync_ctx_num = driver->queue_num;
-			ctx_params->ctx_set_num[i].async_ctx_num = driver->queue_num;
-		}
 	}
 
-	ctx_params->op_type_num = driver->op_type_num;
-	if (ctx_params->op_type_num > (__u32)max_op_type) {
-		WD_ERR("fail to check driver op type numbers.\n");
-		numa_free_nodemask(ctx_params->bmp);
-		return -WD_EAGAIN;
+	/* user_ctx_params is also not set, use driver's defalut queue_num */
+	numa_bitmask_setall(ctx_params->bmp);
+	for (i = 0; i < max_op_type; i++) {
+		ctx_params->ctx_set_num[i].sync_ctx_num = max_op_type;
+		ctx_params->ctx_set_num[i].async_ctx_num = max_op_type;
 	}
+	ctx_params->op_type_num = max_op_type;
 
 	return 0;
 }

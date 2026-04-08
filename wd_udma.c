@@ -374,7 +374,7 @@ void wd_udma_uninit(void)
 	if (status == WD_UNINIT)
 		return;
 
-	wd_alg_uninit_driver_nw(&wd_udma_setting.config);
+	wd_alg_uninit_driver(&wd_udma_setting.config);
 	wd_ctx_drv_deconfig(&wd_udma_setting.config);
 
 	wd_udma_alg_uninit();
@@ -452,7 +452,7 @@ int wd_udma_init(const char *alg, __u32 sched_type, int task_type,
 
 		/* Init ctx param and prepare for ctx request */
 		udma_ctx_params.ctx_set_num = udma_ctx_num;
-		ret = wd_ctx_param_init_nw(&udma_ctx_params, ctx_params,
+		ret = wd_ctx_param_init(&udma_ctx_params, ctx_params,
 					alg, task_type, WD_UDMA_TYPE, WD_UDMA_OP_MAX);
 		if (ret) {
 			if (ret == -WD_EAGAIN) {
@@ -482,7 +482,7 @@ int wd_udma_init(const char *alg, __u32 sched_type, int task_type,
 	if (ret)
 		goto out_uninit_nolock;
 
-	ret = wd_alg_init_driver_nw(&wd_udma_setting.config);
+	ret = wd_alg_init_driver(&wd_udma_setting.config);
 	if (ret)
 		goto out_drv_deconfig;
 
