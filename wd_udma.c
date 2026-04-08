@@ -268,8 +268,8 @@ int wd_do_udma_async(handle_t sess, struct wd_udma_req *req)
 
 	mid = wd_get_msg_from_pool(&wd_udma_setting.pool, idx, (void **)&msg);
 	if (unlikely(mid < 0)) {
-		WD_ERR("failed to get msg from pool!\n");
-		return mid;
+		//WD_ERR("failed to get msg from pool!\n");
+		return -WD_EBUSY;
 	}
 
 	fill_udma_msg(msg, req);

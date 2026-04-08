@@ -484,8 +484,8 @@ int wd_do_rsa_async(handle_t sess, struct wd_rsa_req *req)
 
 	mid = wd_get_msg_from_pool(&wd_rsa_setting.pool, idx, (void **)&msg);
 	if (unlikely(mid < 0)) {
-		WD_ERR("failed to get msg from pool!\n");
-		return mid;
+		//WD_ERR("failed to get msg from pool!\n");
+		return -WD_EBUSY;
 	}
 
 	ret = fill_rsa_msg(msg, req, (struct wd_rsa_sess *)sess);
