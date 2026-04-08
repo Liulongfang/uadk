@@ -1205,8 +1205,7 @@ static void wd_ecc_sess_eops_cfg(struct wd_ecc_sess_setup *setup,
 {
 	if (sess->eops.sess_init && sess->eops.eops_params_cfg) {
 		/* the config result does not impact task sucesss or failure */
-		sess->eops.eops_params_cfg(setup, sess->key.cv,
-						  wd_ecc_setting.priv, sess->eops.params);
+		sess->eops.eops_params_cfg(setup, sess->key.cv, wd_ecc_setting.priv);
 	}
 }
 

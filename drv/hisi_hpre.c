@@ -133,9 +133,6 @@ struct hisi_hpre_ctx {
 	struct wd_ctx_config_internal	config;
 	struct wd_mm_ops *mm_ops;
 	handle_t rsv_mem_ctx;
-};
-
-struct hpre_ecc_ctx {
 	__u32 enable_hpcore;
 };
 
@@ -656,6 +653,9 @@ static int hpre_init_qm_priv(struct wd_ctx_config_internal *config,
 	qm_priv->sqe_size = sizeof(struct hisi_hpre_sqe);
 
 	for (i = 0; i < config->ctx_num; i++) {
+		if (config->ctxs[i].ctx_type != UADK_CTX_HW ||
+		     !config->ctxs[i].ctx)
+			continue;
 		h_ctx = config->ctxs[i].ctx;
 		qm_priv->qp_mode = config->ctxs[i].ctx_mode;
 		/* Setting the epoll en to 0 for ASYNC ctx */
@@ -1577,7 +1577,7 @@ static int u_is_in_p(struct wd_ecc_msg *msg)
 static int ecc_prepare_in(struct wd_ecc_msg *msg,
 			  struct hisi_hpre_sqe *hw_msg, void **data)
 {
-	struct hpre_ecc_ctx *ecc_ctx = msg->drv_cfg;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)msg->drv_cfg;
 	int ret = -WD_EINVAL;
 
 	switch (msg->req.op_type) {
@@ -1590,11 +1590,11 @@ static int ecc_prepare_in(struct wd_ecc_msg *msg,
 		ret = ecc_prepare_dh_gen_in(msg, hw_msg, data);
 		break;
 	case WD_ECXDH_GEN_KEY:
-		hw_msg->bd_rsv2 = ecc_ctx->enable_hpcore;
+		hw_msg->bd_rsv2 = hpre_ctx->enable_hpcore;
 		ret = ecc_prepare_dh_gen_in(msg, hw_msg, data);
 		break;
 	case WD_ECXDH_COMPUTE_KEY:
-		hw_msg->bd_rsv2 = ecc_ctx->enable_hpcore;
+		hw_msg->bd_rsv2 = hpre_ctx->enable_hpcore;
 		ret = ecc_prepare_dh_compute_in(msg, hw_msg, data);
 		if (!ret && (msg->curve_id == WD_X25519 ||
 		    msg->curve_id == WD_X448))
@@ -2817,39 +2817,6 @@ static int hpre_rsa_get_usage(void *param)
 	return -WD_EACCES;
 }
 
-static int ecc_sess_eops_init(struct wd_alg_driver *drv, void **params)
-{
-	struct hpre_ecc_ctx *ecc_ctx;
-
-	if (!params) {
-		WD_ERR("invalid: extend ops init params address is NULL!\n");
-		return -WD_EINVAL;
-	}
-
-	if (*params) {
-		WD_ERR("invalid: extend ops init params repeatedly!\n");
-		return -WD_EINVAL;
-	}
-
-	ecc_ctx = calloc(1, sizeof(struct hpre_ecc_ctx));
-	if (!ecc_ctx)
-		return -WD_ENOMEM;
-
-	*params = ecc_ctx;
-
-	return WD_SUCCESS;
-}
-
-static void ecc_sess_eops_uninit(struct wd_alg_driver *drv, void *params)
-{
-	if (!params) {
-		WD_ERR("invalid: extend ops uninit params is NULL!\n");
-		return;
-	}
-
-	free(params);
-}
-
 static bool is_valid_hw_type(void *drv_priv)
 {
 	struct hisi_hpre_ctx *hpre_ctx;
@@ -2866,20 +2833,26 @@ static bool is_valid_hw_type(void *drv_priv)
 }
 
 static void ecc_sess_eops_params_cfg(struct wd_ecc_sess_setup *setup,
-				     struct wd_ecc_curve *cv, void *drv_priv, void *params)
+				     struct wd_ecc_curve *cv, void *priv)
 {
 	__u8 data[SECP256R1_PARAM_SIZE] = SECG_P256_R1_PARAM;
-	struct hpre_ecc_ctx *ecc_ctx = params;
+	struct hisi_hpre_ctx *hpre_ctx;
+	struct hisi_qp *qp;
 	__u32 key_size;
 	int ret;
 
-	if (!is_valid_hw_type(drv_priv))
+	if (unlikely(!priv))
 		return;
 
-	if (!ecc_ctx) {
+	hpre_ctx = (struct hisi_hpre_ctx *)priv;
+	if (!hpre_ctx) {
 		WD_INFO("Info: eops config exits, but params is NULL!\n");
 		return;
 	}
+
+	qp = (struct hisi_qp *)wd_ctx_get_priv(hpre_ctx->config.ctxs[0].ctx);
+	if (qp->q_info.hw_type < HISI_QM_API_VER3_BASE)
+		return;
 
 	if (strcmp(setup->alg, "ecdh"))
 		return;
@@ -2890,7 +2863,7 @@ static void ecc_sess_eops_params_cfg(struct wd_ecc_sess_setup *setup,
 
 	ret = memcmp(data, cv->p.data, SECP256R1_PARAM_SIZE);
 	if (!ret)
-		ecc_ctx->enable_hpcore = 1;
+		hpre_ctx->enable_hpcore = 1;
 }
 
 static int hpre_ecc_get_extend_ops(void *ops)
@@ -2901,9 +2874,9 @@ static int hpre_ecc_get_extend_ops(void *ops)
 		return -WD_EINVAL;
 
 	ecc_ops->params = NULL;
-	ecc_ops->sess_init = ecc_sess_eops_init;
+	ecc_ops->sess_init = NULL;
 	ecc_ops->eops_params_cfg = ecc_sess_eops_params_cfg;
-	ecc_ops->sess_uninit = ecc_sess_eops_uninit;
+	ecc_ops->sess_uninit = NULL;
 	return WD_SUCCESS;
 }
 
