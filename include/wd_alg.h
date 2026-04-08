@@ -64,14 +64,23 @@ typedef unsigned char __u8;
 # define HWCAP2_RNG             (1 << 16)
 #endif
 
-enum alg_dev_type {
-	UADK_ALG_SOFT = 0x0,
+enum alg_priority {
+	UADK_ALG_HW = 0x0,
 	UADK_ALG_CE_INSTR = 0x1,
 	UADK_ALG_SVE_INSTR = 0x2,
-	UADK_ALG_HW = 0x3
+	UADK_ALG_SOFT = 0x3
 };
 
-/*
+enum alg_drv_type {
+	ALG_DRV_HW = 0x0,
+	ALG_DRV_CE_INS,
+	ALG_DRV_SVE_INS,
+	ALG_DRV_SOFT,
+	ALG_DRV_INS,
+	ALG_DRV_FB,
+};
+
+/**
  * @drv_name: name of the current device driver
  * @alg_name: name of the algorithm supported by the driver
  * @priority: priority of the type of algorithm supported by the driver
@@ -110,6 +119,7 @@ struct wd_alg_driver {
 	int	priv_size;
 	int	*drv_data;
 	handle_t fallback;
+	int     init_state;
 
 	int (*init)(void *conf, void *priv);
 	void (*exit)(void *priv);
@@ -134,7 +144,7 @@ struct hisi_dev_usage {
 int wd_alg_driver_register(struct wd_alg_driver *drv);
 void wd_alg_driver_unregister(struct wd_alg_driver *drv);
 
-/*
+/**
  * @alg_name: name of the algorithm supported by the driver
  * @drv_name: name of the current device driver
  * @available: Indicates whether the current driver still has resources available
@@ -158,25 +168,24 @@ struct wd_alg_list {
 	char alg_type[ALG_NAME_SIZE];
 };
 
-/*
+/**
  * wd_request_drv() - Apply for an algorithm driver.
  * @alg_name: task algorithm name.
- * @hw_mask: the flag of shield hardware device drivers.
+ * @drv_type: the type of shield hardware device drivers.
  *
  * Returns the applied algorithm driver, non means error.
  */
-struct wd_alg_driver *wd_request_drv(const char	*alg_name, bool hw_mask);
+struct wd_alg_driver *wd_request_drv(const char	*alg_name, int drv_type);
 void wd_release_drv(struct wd_alg_driver *drv);
 
-/*
+/**
  * wd_drv_alg_support() - Check the algorithms supported by the driver.
  * @alg_name: task algorithm name.
- * @drv: a device driver that supports an algorithm.
+ * @param: a device queue parameters.
  *
  * Return check result.
  */
-bool wd_drv_alg_support(const char *alg_name,
-	struct wd_alg_driver *drv);
+bool wd_drv_alg_support(const char *alg_name, void *param);
 
 /*
  * wd_enable_drv() - Re-enable use of the current device driver.
@@ -191,7 +200,7 @@ int wd_get_alg_type(const char *alg_name, char *alg_type);
 struct wd_alg_list *wd_get_alg_head(void);
 
 #ifdef WD_STATIC_DRV
-/*
+/**
  * duplicate drivers will be skipped when it register to alg_list
  */
 void hisi_sec2_probe(void);
