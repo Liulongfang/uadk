@@ -2026,6 +2026,7 @@ static void parse_digest_bd2(struct hisi_qp *qp, struct hisi_sec_sqe *sqe,
 	if (qp->q_info.qp_mode == CTX_MODE_ASYNC) {
 		recv_msg->alg_type = WD_DIGEST;
 		recv_msg->data_fmt = get_data_fmt_v2(sqe->sds_sa_type);
+#if 0
 		temp_msg = wd_digest_get_msg(qp->q_info.idx, recv_msg->tag);
 		if (!temp_msg) {
 			recv_msg->result = WD_IN_EPARA;
@@ -2033,6 +2034,7 @@ static void parse_digest_bd2(struct hisi_qp *qp, struct hisi_sec_sqe *sqe,
 				qp->q_info.idx, recv_msg->tag);
 			return;
 		}
+#endif
 		recv_msg->in = temp_msg->in;
 		recv_msg->mm_ops = temp_msg->mm_ops;
 	} else {
@@ -2573,6 +2575,7 @@ static void parse_digest_bd3(struct hisi_qp *qp, struct hisi_sec_sqe3 *sqe,
 	if (qp->q_info.qp_mode == CTX_MODE_ASYNC) {
 		recv_msg->alg_type = WD_DIGEST;
 		recv_msg->data_fmt = get_data_fmt_v3(sqe->bd_param);
+#if 0
 		temp_msg = wd_digest_get_msg(qp->q_info.idx, recv_msg->tag);
 		if (!temp_msg) {
 			recv_msg->result = WD_IN_EPARA;
@@ -2580,6 +2583,7 @@ static void parse_digest_bd3(struct hisi_qp *qp, struct hisi_sec_sqe3 *sqe,
 				qp->q_info.idx, recv_msg->tag);
 			return;
 		}
+#endif
 		recv_msg->in = temp_msg->in;
 		recv_msg->mm_ops = temp_msg->mm_ops;
 	} else {
@@ -3330,6 +3334,7 @@ static void parse_aead_bd2(struct hisi_qp *qp, struct hisi_sec_sqe *sqe,
 	if (qp->q_info.qp_mode == CTX_MODE_ASYNC) {
 		recv_msg->alg_type = WD_AEAD;
 		recv_msg->data_fmt = get_data_fmt_v2(sqe->sds_sa_type);
+#if 0
 		temp_msg = wd_aead_get_msg(qp->q_info.idx, recv_msg->tag);
 		if (!temp_msg) {
 			recv_msg->result = WD_IN_EPARA;
@@ -3337,6 +3342,7 @@ static void parse_aead_bd2(struct hisi_qp *qp, struct hisi_sec_sqe *sqe,
 				qp->q_info.idx, recv_msg->tag);
 			return;
 		}
+#endif
 		recv_msg->in = temp_msg->in;
 		recv_msg->out = temp_msg->out;
 		recv_msg->mm_ops = temp_msg->mm_ops;
@@ -3846,6 +3852,7 @@ static void parse_aead_bd3(struct hisi_qp *qp, struct hisi_sec_sqe3 *sqe,
 	if (qp->q_info.qp_mode == CTX_MODE_ASYNC) {
 		recv_msg->alg_type = WD_AEAD;
 		recv_msg->data_fmt = get_data_fmt_v3(sqe->bd_param);
+#if 0
 		temp_msg = wd_aead_get_msg(qp->q_info.idx, recv_msg->tag);
 		if (!temp_msg) {
 			recv_msg->result = WD_IN_EPARA;
@@ -3853,6 +3860,7 @@ static void parse_aead_bd3(struct hisi_qp *qp, struct hisi_sec_sqe3 *sqe,
 				qp->q_info.idx, recv_msg->tag);
 			return;
 		}
+#endif
 		recv_msg->in = temp_msg->in;
 		recv_msg->out = temp_msg->out;
 		recv_msg->mm_ops = temp_msg->mm_ops;

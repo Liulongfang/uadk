@@ -21,12 +21,7 @@ int main(int argc, char **argv)
 	int ret;
 
 	if (argc > index) {
-		if (!strcmp("dfx", argv[index])) {
-			if (!argv[++index])
-				print_dfx_help();
-
-			dfx_cmd_parse(argc, argv);
-		} else if (!strcmp("benchmark", argv[index])) {
+		if (!strcmp("benchmark", argv[index])) {
 			printf("start UADK benchmark test.\n");
 			if (!argv[++index]) {
 				print_benchmark_help();
@@ -41,12 +36,6 @@ int main(int argc, char **argv)
 			if (ret)
 				return ret;
 			(void)acc_benchmark_run(&option);
-		} else if (!strcmp("test", argv[index])) {
-			if (!argv[++index])
-				print_test_help();
-
-			printf("start UADK acc algorithm test.\n");
-			acc_test_run(argc, argv);
 		} else {
 			print_tool_help();
 		}

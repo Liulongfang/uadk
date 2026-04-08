@@ -38,7 +38,6 @@ struct wd_ctx_internal {
 	__u16 sqn;
 	pthread_spinlock_t lock;
 	struct wd_alg_driver *drv;
-	void *extend_ops;
 	void *drv_priv;
 	void *extend_ops;
 };
