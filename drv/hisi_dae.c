@@ -426,7 +426,7 @@ static int check_hashagg_param(struct wd_agg_msg *msg)
 	return WD_SUCCESS;
 }
 
-static int hashagg_send(struct wd_alg_driver *drv, handle_t ctx, void *hashagg_msg)
+static int hashagg_send(handle_t ctx, void *hashagg_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -563,7 +563,7 @@ static void fill_hashagg_msg_task_err(struct dae_sqe *sqe, struct wd_agg_msg *ms
 	}
 }
 
-static int hashagg_recv(struct wd_alg_driver *drv, handle_t ctx, void *hashagg_msg)
+static int hashagg_recv(handle_t ctx, void *hashagg_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -1214,16 +1214,10 @@ static void hashagg_sess_priv_uninit(struct wd_alg_driver *drv, void *priv)
 	free(agg_ctx);
 }
 
-static int hashagg_sess_priv_init(struct wd_alg_driver *drv,
-				  struct wd_agg_sess_setup *setup, void **priv)
+static int hashagg_sess_priv_init(struct wd_agg_sess_setup *setup, void **priv)
 {
 	struct hashagg_ctx *agg_ctx;
 	int ret;
-
-	if (!drv || !drv->priv) {
-		WD_ERR("invalid: dae drv is NULL!\n");
-		return -WD_EINVAL;
-	}
 
 	if (!setup || !priv) {
 		WD_ERR("invalid: dae sess priv is NULL!\n");
@@ -1297,6 +1291,7 @@ static struct wd_alg_driver hashagg_driver = {
 	.alg_name = "hashagg",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_dae_ctx),
 	.queue_num = DAE_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,

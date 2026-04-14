@@ -210,8 +210,8 @@ struct hisi_dae_ctx {
 	struct wd_ctx_config_internal config;
 };
 
-void dae_exit(struct wd_alg_driver *drv);
-int dae_init(struct wd_alg_driver *drv, void *conf);
+void dae_exit(void *priv);
+int dae_init(void *conf, void *priv);
 int dae_hash_table_init(struct hash_table_data *hw_table,
 			struct hash_table_data *rehash_table,
 			struct wd_dae_hash_table *hash_table,

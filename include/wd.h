@@ -44,7 +44,8 @@ typedef struct wd_dev_mask wd_dev_mask_t;
 
 typedef void (*wd_log)(const char *format, ...);
 
-#ifndef WD_NO_LOG
+//#ifndef WD_NO_LOG
+#if 0
 #define WD_DEBUG(fmt, args...)  \
 	do {\
 		openlog("uadk-debug", LOG_CONS | LOG_PID, LOG_LOCAL5);\
@@ -103,11 +104,6 @@ typedef void (*wd_log)(const char *format, ...);
 #define WD_HANDLE_ERR(h)		((long long)(h))
 #define WD_IS_ERR(h)			((uintptr_t)(h) > \
 					(uintptr_t)(-1000))
-
-enum wd_buff_type {
-	WD_FLAT_BUF,
-	WD_SGL_BUF,
-};
 
 enum wd_alg_type {
 	WD_CIPHER,

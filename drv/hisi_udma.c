@@ -290,7 +290,7 @@ static void fill_init_value(struct udma_sqe *sqe, struct wd_udma_msg *msg)
 		memset(&sqe->init_val, msg->value, sizeof(__u64));
 }
 
-static int udma_send(struct wd_alg_driver *drv, handle_t ctx, void *udma_msg)
+static int udma_send(handle_t ctx, void *udma_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -342,7 +342,7 @@ static void dump_udma_msg(struct udma_sqe *sqe, struct wd_udma_msg *msg)
 	       "op_type:%u addr_num:%d.\n", msg->op_type, msg->addr_num);
 }
 
-static int udma_recv(struct wd_alg_driver *drv, handle_t ctx, void *udma_msg)
+static int udma_recv(handle_t ctx, void *udma_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -442,11 +442,11 @@ free_inter_addr:
 	return ret;
 }
 
-static int udma_init(struct wd_alg_driver *drv, void *conf)
+static int udma_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = conf;
+	struct hisi_udma_ctx *uctx = priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_udma_ctx *priv;
 	handle_t h_qp = 0;
 	handle_t h_ctx;
 	__u32 i, j;
@@ -457,14 +457,13 @@ static int udma_init(struct wd_alg_driver *drv, void *conf)
 		return -WD_EINVAL;
 	}
 
-	priv = malloc(sizeof(struct hisi_udma_ctx));
-	if (!priv)
-		return -WD_ENOMEM;
-
 	qm_priv.op_type = UDMA_ALG_TYPE;
 	qm_priv.sqe_size = sizeof(struct udma_sqe);
 	/* Allocate qp for each context */
 	for (i = 0; i < config->ctx_num; i++) {
+		if (config->ctxs[i].ctx_type != UADK_CTX_HW ||
+		     !config->ctxs[i].ctx)
+			continue;
 		h_ctx = config->ctxs[i].ctx;
 		qm_priv.qp_mode = config->ctxs[i].ctx_mode;
 		/* Setting the epoll en to 0 for ASYNC ctx */
@@ -481,8 +480,7 @@ static int udma_init(struct wd_alg_driver *drv, void *conf)
 		if (ret)
 			goto free_h_qp;
 	}
-	memcpy(&priv->config, config, sizeof(struct wd_ctx_config_internal));
-	drv->priv = priv;
+	memcpy(&uctx->config, config, sizeof(struct wd_ctx_config_internal));
 
 	return WD_SUCCESS;
 free_h_qp:
@@ -493,30 +491,26 @@ out:
 		udma_uninit_qp_priv(h_qp);
 		hisi_qm_free_qp(h_qp);
 	}
-	free(priv);
 	return ret;
 }
 
-static void udma_exit(struct wd_alg_driver *drv)
+static void udma_exit(void *priv)
 {
 	struct wd_ctx_config_internal *config;
-	struct hisi_udma_ctx *priv;
+	struct hisi_udma_ctx *uctx = priv;
 	handle_t h_qp;
 	__u32 i;
 
-	if (!drv || !drv->priv)
+	if (!priv)
 		return;
 
-	priv = (struct hisi_udma_ctx *)drv->priv;
-	config = &priv->config;
+	config = &uctx->config;
 	for (i = 0; i < config->ctx_num; i++) {
 		h_qp = (handle_t)wd_ctx_get_priv(config->ctxs[i].ctx);
 		udma_uninit_qp_priv(h_qp);
 		hisi_qm_free_qp(h_qp);
 	}
 
-	free(priv);
-	drv->priv = NULL;
 }
 
 static int udma_get_usage(void *param)
@@ -535,7 +529,7 @@ static int udma_get_usage(void *param)
 		return -WD_EINVAL;
 	}
 
-	priv = (struct hisi_udma_ctx *)drv->priv;
+	priv = (struct hisi_udma_ctx *)drv->drv_data;
 	if (!priv)
 		return -WD_EACCES;
 
@@ -562,6 +556,7 @@ static struct wd_alg_driver udma_driver = {
 	.alg_name = "udma",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_udma_ctx),
 	.queue_num = UDMA_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,

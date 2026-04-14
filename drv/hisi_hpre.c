@@ -133,9 +133,6 @@ struct hisi_hpre_ctx {
 	struct wd_ctx_config_internal	config;
 	struct wd_mm_ops *mm_ops;
 	handle_t rsv_mem_ctx;
-};
-
-struct hpre_ecc_ctx {
 	__u32 enable_hpcore;
 };
 
@@ -656,6 +653,9 @@ static int hpre_init_qm_priv(struct wd_ctx_config_internal *config,
 	qm_priv->sqe_size = sizeof(struct hisi_hpre_sqe);
 
 	for (i = 0; i < config->ctx_num; i++) {
+		if (config->ctxs[i].ctx_type != UADK_CTX_HW ||
+		     !config->ctxs[i].ctx)
+			continue;
 		h_ctx = config->ctxs[i].ctx;
 		qm_priv->qp_mode = config->ctxs[i].ctx_mode;
 		/* Setting the epoll en to 0 for ASYNC ctx */
@@ -680,11 +680,11 @@ out:
 	return -WD_EINVAL;
 }
 
-static int hpre_rsa_dh_init(struct wd_alg_driver *drv, void *conf)
+static int hpre_rsa_dh_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = (struct wd_ctx_config_internal *)conf;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_hpre_ctx *priv;
 	int ret;
 
 	if (!config->ctx_num) {
@@ -692,27 +692,19 @@ static int hpre_rsa_dh_init(struct wd_alg_driver *drv, void *conf)
 		return -WD_EINVAL;
 	}
 
-	priv = malloc(sizeof(struct hisi_hpre_ctx));
-	if (!priv)
-		return -WD_EINVAL;
-
 	qm_priv.op_type = HPRE_HW_V2_ALG_TYPE;
-	ret = hpre_init_qm_priv(config, priv, &qm_priv);
-	if (ret) {
-		free(priv);
+	ret = hpre_init_qm_priv(config, hpre_ctx, &qm_priv);
+	if (ret)
 		return ret;
-	}
-
-	drv->priv = priv;
 
 	return WD_SUCCESS;
 }
 
-static int hpre_ecc_init(struct wd_alg_driver *drv, void *conf)
+static int hpre_ecc_init(void *conf, void *priv)
 {
 	struct wd_ctx_config_internal *config = (struct wd_ctx_config_internal *)conf;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
 	struct hisi_qm_priv qm_priv;
-	struct hisi_hpre_ctx *priv;
 	int ret;
 
 	if (!config->ctx_num) {
@@ -720,44 +712,28 @@ static int hpre_ecc_init(struct wd_alg_driver *drv, void *conf)
 		return -WD_EINVAL;
 	}
 
-	priv = malloc(sizeof(struct hisi_hpre_ctx));
-	if (!priv)
-		return -WD_EINVAL;
-
 	qm_priv.op_type = HPRE_HW_V3_ECC_ALG_TYPE;
-	ret = hpre_init_qm_priv(config, priv, &qm_priv);
-	if (ret) {
-		free(priv);
+	ret = hpre_init_qm_priv(config, hpre_ctx, &qm_priv);
+	if (ret)
 		return ret;
-	}
-
-	drv->priv = priv;
 
 	return WD_SUCCESS;
 }
 
-static void hpre_exit(struct wd_alg_driver *drv)
+static void hpre_exit(void *priv)
 {
-	struct wd_ctx_config_internal *config;
-	struct hisi_hpre_ctx *priv;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)priv;
+	struct wd_ctx_config_internal *config = &hpre_ctx->config;
 	handle_t h_qp;
 	__u32 i;
 
-	if (!drv || !drv->priv)
-		return;
-
-	priv = (struct hisi_hpre_ctx *)drv->priv;
-	config = &priv->config;
 	for (i = 0; i < config->ctx_num; i++) {
 		h_qp = (handle_t)wd_ctx_get_priv(config->ctxs[i].ctx);
 		hisi_qm_free_qp(h_qp);
 	}
-
-	free(priv);
-	drv->priv = NULL;
 }
 
-static int rsa_send(struct wd_alg_driver *drv, handle_t ctx, void *rsa_msg)
+static int rsa_send(handle_t ctx, void *rsa_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_rsa_msg *msg = rsa_msg;
@@ -829,7 +805,7 @@ static void hpre_result_check(struct hisi_hpre_sqe *hw_msg,
 	}
 }
 
-static int rsa_recv(struct wd_alg_driver *drv, handle_t ctx, void *rsa_msg)
+static int rsa_recv(handle_t ctx, void *rsa_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -949,7 +925,7 @@ static int dh_out_transfer(struct wd_dh_msg *msg, struct hisi_hpre_sqe *hw_msg,
 	return WD_SUCCESS;
 }
 
-static int dh_send(struct wd_alg_driver *drv, handle_t ctx, void *dh_msg)
+static int dh_send(handle_t ctx, void *dh_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct map_info_cache cache = {0};
@@ -1020,7 +996,7 @@ dh_fail:
 	return ret;
 }
 
-static int dh_recv(struct wd_alg_driver *drv, handle_t ctx, void *dh_msg)
+static int dh_recv(handle_t ctx, void *dh_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct hisi_qp *qp = (struct hisi_qp *)h_qp;
@@ -1601,7 +1577,7 @@ static int u_is_in_p(struct wd_ecc_msg *msg)
 static int ecc_prepare_in(struct wd_ecc_msg *msg,
 			  struct hisi_hpre_sqe *hw_msg, void **data)
 {
-	struct hpre_ecc_ctx *ecc_ctx = msg->drv_cfg;
+	struct hisi_hpre_ctx *hpre_ctx = (struct hisi_hpre_ctx *)msg->priv;
 	int ret = -WD_EINVAL;
 
 	switch (msg->req.op_type) {
@@ -1614,11 +1590,11 @@ static int ecc_prepare_in(struct wd_ecc_msg *msg,
 		ret = ecc_prepare_dh_gen_in(msg, hw_msg, data);
 		break;
 	case WD_ECXDH_GEN_KEY:
-		hw_msg->bd_rsv2 = ecc_ctx->enable_hpcore;
+		hw_msg->bd_rsv2 = hpre_ctx->enable_hpcore;
 		ret = ecc_prepare_dh_gen_in(msg, hw_msg, data);
 		break;
 	case WD_ECXDH_COMPUTE_KEY:
-		hw_msg->bd_rsv2 = ecc_ctx->enable_hpcore;
+		hw_msg->bd_rsv2 = hpre_ctx->enable_hpcore;
 		ret = ecc_prepare_dh_compute_in(msg, hw_msg, data);
 		if (!ret && (msg->curve_id == WD_X25519 ||
 		    msg->curve_id == WD_X448))
@@ -2147,7 +2123,7 @@ free_dst:
 	return ret;
 }
 
-static int ecc_send(struct wd_alg_driver *drv, handle_t ctx, void *ecc_msg)
+static int ecc_send(handle_t ctx, void *ecc_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_ecc_msg *msg = ecc_msg;
@@ -2743,7 +2719,7 @@ fail:
 	return ret;
 }
 
-static int ecc_recv(struct wd_alg_driver *drv, handle_t ctx, void *ecc_msg)
+static int ecc_recv(handle_t ctx, void *ecc_msg)
 {
 	handle_t h_qp = (handle_t)wd_ctx_get_priv(ctx);
 	struct wd_ecc_msg *msg = ecc_msg;
@@ -2786,7 +2762,7 @@ static handle_t hpre_find_dev_qp(struct wd_alg_driver *drv, const char *dev_name
 	handle_t qp = 0;
 	__u32 i;
 
-	priv = (struct hisi_hpre_ctx *)drv->priv;
+	priv = (struct hisi_hpre_ctx *)drv->drv_data;
 	if (!priv)
 		return 0;
 
@@ -2841,70 +2817,42 @@ static int hpre_rsa_get_usage(void *param)
 	return -WD_EACCES;
 }
 
-static int ecc_sess_eops_init(struct wd_alg_driver *drv, void **params)
-{
-	struct hpre_ecc_ctx *ecc_ctx;
-
-	if (!params) {
-		WD_ERR("invalid: extend ops init params address is NULL!\n");
-		return -WD_EINVAL;
-	}
-
-	if (*params) {
-		WD_ERR("invalid: extend ops init params repeatedly!\n");
-		return -WD_EINVAL;
-	}
-
-	ecc_ctx = calloc(1, sizeof(struct hpre_ecc_ctx));
-	if (!ecc_ctx)
-		return -WD_ENOMEM;
-
-	*params = ecc_ctx;
-
-	return WD_SUCCESS;
-}
-
-static void ecc_sess_eops_uninit(struct wd_alg_driver *drv, void *params)
-{
-	if (!params) {
-		WD_ERR("invalid: extend ops uninit params is NULL!\n");
-		return;
-	}
-
-	free(params);
-}
-
-static bool is_valid_hw_type(struct wd_alg_driver *drv)
+static bool is_valid_hw_type(void *drv_priv)
 {
 	struct hisi_hpre_ctx *hpre_ctx;
 	struct hisi_qp *qp;
 
-	if (unlikely(!drv || !drv->priv))
+	if (unlikely(!drv_priv))
 		return false;
 
-	hpre_ctx = (struct hisi_hpre_ctx *)drv->priv;
+	hpre_ctx = (struct hisi_hpre_ctx *)drv_priv;
 	qp = (struct hisi_qp *)wd_ctx_get_priv(hpre_ctx->config.ctxs[0].ctx);
 	if (!qp || qp->q_info.hw_type < HISI_QM_API_VER3_BASE)
 		return false;
 	return true;
 }
 
-static void ecc_sess_eops_params_cfg(struct wd_alg_driver *drv,
-				     struct wd_ecc_sess_setup *setup,
-				     struct wd_ecc_curve *cv, void *params)
+static void ecc_sess_eops_params_cfg(struct wd_ecc_sess_setup *setup,
+				     struct wd_ecc_curve *cv, void *priv)
 {
 	__u8 data[SECP256R1_PARAM_SIZE] = SECG_P256_R1_PARAM;
-	struct hpre_ecc_ctx *ecc_ctx = params;
+	struct hisi_hpre_ctx *hpre_ctx;
+	struct hisi_qp *qp;
 	__u32 key_size;
 	int ret;
 
-	if (!is_valid_hw_type(drv))
+	if (unlikely(!priv))
 		return;
 
-	if (!ecc_ctx) {
+	hpre_ctx = (struct hisi_hpre_ctx *)priv;
+	if (!hpre_ctx) {
 		WD_INFO("Info: eops config exits, but params is NULL!\n");
 		return;
 	}
+
+	qp = (struct hisi_qp *)wd_ctx_get_priv(hpre_ctx->config.ctxs[0].ctx);
+	if (qp->q_info.hw_type < HISI_QM_API_VER3_BASE)
+		return;
 
 	if (strcmp(setup->alg, "ecdh"))
 		return;
@@ -2915,7 +2863,7 @@ static void ecc_sess_eops_params_cfg(struct wd_alg_driver *drv,
 
 	ret = memcmp(data, cv->p.data, SECP256R1_PARAM_SIZE);
 	if (!ret)
-		ecc_ctx->enable_hpcore = 1;
+		hpre_ctx->enable_hpcore = 1;
 }
 
 static int hpre_ecc_get_extend_ops(void *ops)
@@ -2925,10 +2873,7 @@ static int hpre_ecc_get_extend_ops(void *ops)
 	if (!ecc_ops)
 		return -WD_EINVAL;
 
-	ecc_ops->params = NULL;
-	ecc_ops->sess_init = ecc_sess_eops_init;
 	ecc_ops->eops_params_cfg = ecc_sess_eops_params_cfg;
-	ecc_ops->sess_uninit = ecc_sess_eops_uninit;
 	return WD_SUCCESS;
 }
 
@@ -2938,6 +2883,7 @@ static int hpre_ecc_get_extend_ops(void *ops)
 	.alg_name = (hpre_alg_name),\
 	.calc_type = UADK_ALG_HW,\
 	.priority = 100,\
+	.priv_size = sizeof(struct hisi_hpre_ctx),\
 	.queue_num = HPRE_CTX_Q_NUM_DEF,\
 	.op_type_num = 1,\
 	.fallback = 0,\
@@ -2962,6 +2908,7 @@ static struct wd_alg_driver hpre_rsa_driver = {
 	.alg_name = "rsa",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_hpre_ctx),
 	.queue_num = HPRE_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,
@@ -2977,6 +2924,7 @@ static struct wd_alg_driver hpre_dh_driver = {
 	.alg_name = "dh",
 	.calc_type = UADK_ALG_HW,
 	.priority = 100,
+	.priv_size = sizeof(struct hisi_hpre_ctx),
 	.queue_num = HPRE_CTX_Q_NUM_DEF,
 	.op_type_num = 1,
 	.fallback = 0,
