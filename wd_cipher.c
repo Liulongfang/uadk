@@ -267,6 +267,7 @@ static int cipher_setup_memory_and_buffers(struct wd_cipher_sess *sess,
 handle_t wd_cipher_alloc_sess(struct wd_cipher_sess_setup *setup)
 {
 	struct wd_cipher_sess *sess = NULL;
+	struct wd_sched_params params;
 	bool ret;
 
 	if (unlikely(!setup)) {
@@ -307,6 +308,14 @@ handle_t wd_cipher_alloc_sess(struct wd_cipher_sess_setup *setup)
 		WD_ERR("failed to init session schedule key!\n");
 		goto free_key;
 	}
+
+	/* Set compat filtering parameters for session-ctx matching */
+	memset(&params, 0, sizeof(params));
+	params.alg_name = sess->alg_name;
+	params.ctxs = wd_cipher_setting.config.ctxs;
+	wd_cipher_setting.sched.set_param(
+		wd_cipher_setting.sched.h_sched_ctx,
+		sess->sched_key, &params);
 
 	return (handle_t)sess;
 

@@ -25,6 +25,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "wd_sched.h"
+#include "wd_alg.h"
+#include "wd_internal.h"
 
 #define MAX_POLL_TIMES			1000
 #define HUNGRY_LOAD_THRESHOLD		256
@@ -209,6 +211,10 @@ struct wd_sched_key {
 	struct wd_sched_key_domain async_domain;
 
 	pthread_mutex_t lock;
+
+	/* Compat filtering parameters for session-ctx matching */
+	const char *alg_name;
+	struct wd_ctx_internal *ctxs;
 };
 
 /**
@@ -915,6 +921,65 @@ static void wd_sched_skey_domain_destroy(struct wd_sched_key_domain *key_domain)
 	wd_sched_skey_cache_uninit(&key_domain->idx_cache);
 }
 
+/* Forward declaration for compat filtering */
+static __u32 session_sched_init_ctx(struct wd_sched_ctx *sched_ctx,
+	int region_id, __u32 op_type, __u8 prop,
+	const int sched_mode, struct wd_sched_key *skey);
+
+/**
+ * wd_sched_skey_compat_filter - Filter and replace incompatible ctxs in domain cache
+ * @sched_ctx: Scheduler context
+ * @skey: Session key with alg_name and ctxs
+ * @domain: Target domain (sync or async)
+ * @sched_mode: SCHED_MODE_SYNC or SCHED_MODE_ASYNC
+ *
+ * For each ctx in domain cache, check if it supports alg_name.
+ * If not, find a compatible replacement from the global domain.
+ */
+static void wd_sched_skey_compat_filter(struct wd_sched_ctx *sched_ctx,
+	struct wd_sched_key *skey, struct wd_sched_key_domain *domain, int sched_mode)
+{
+	__u32 ctx_idx, new_ctx;
+	int i;
+
+	if (!skey || !skey->alg_name || !skey->ctxs || !domain)
+		return;
+
+	/* Skip uninitialized domains (no ctxs cached) */
+	if (domain->idx_cache.valid_count == 0)
+		return;
+
+	pthread_mutex_lock(&domain->lock);
+
+	for (i = 0; i < domain->idx_cache.valid_count; i++) {
+		ctx_idx = domain->idx_cache.idx_list[i];
+
+		/* Check if current ctx is compatible */
+		if (skey->ctxs[ctx_idx].drv &&
+		    wd_alg_match_drv(skey->ctxs[ctx_idx].drv, skey->alg_name)) {
+			/* Compatible, keep unchanged */
+			continue;
+		}
+
+		/* Not compatible, find a replacement from domain */
+		new_ctx = session_sched_init_ctx(sched_ctx, skey->region_id,
+			skey->type, skey->ctx_prop, sched_mode, skey);
+
+		if (new_ctx != INVALID_POS && new_ctx != ctx_idx) {
+			/* Found compatible ctx, replace */
+			domain->idx_cache.idx_list[i] = new_ctx;
+			atomic_store(&domain->idx_cache.load_values[i], 0);
+			WD_DEBUG("replaced ctx %u with compat ctx %u\n", ctx_idx, new_ctx);
+		} else {
+			/* No compatible ctx found, mark as invalid */
+			domain->idx_cache.idx_list[i] = INVALID_POS;
+			WD_ERR("no compatible ctx found for alg %s\n", skey->alg_name);
+		}
+	}
+
+	pthread_mutex_unlock(&domain->lock);
+}
+
 /**
  * wd_sched_poll_skey - Poll contexts for scheduler session
  * @sched_ctx: Scheduler context
@@ -1075,14 +1140,18 @@ static struct wd_sched_key *sched_get_poll_skey(struct wd_sched_ctx *sched_ctx)
  * @op_type: Operation type
  * @prop: Property
  * @sched_mode: Mode (SYNC/ASYNC)
+ * @skey: Session key (for compat filtering, can be NULL)
  *
- * Returns: Context index from domain
+ * Returns: Context index from domain (compatible with alg_name if skey provided)
  */
 static __u32 session_sched_init_ctx(struct wd_sched_ctx *sched_ctx,
                                     int region_id, __u32 op_type, __u8 prop,
-                                    const int sched_mode)
+                                    const int sched_mode,
+                                    struct wd_sched_key *skey)
 {
 	struct wd_sched_ctx_domain *domain = NULL;
+	__u32 ctx_idx;
+	int i;
 
 	if (region_id >= sched_ctx->region_num || sched_mode >= SCHED_MODE_BUTT ||
 	     op_type >= sched_ctx->type_num || prop >= UADK_ALG_TYPE_MAX) {
@@ -1095,11 +1164,25 @@ static __u32 session_sched_init_ctx(struct wd_sched_ctx *sched_ctx,
 		return INVALID_POS;
 
 	domain = wd_sched_hash_table_lookup(sched_ctx->domain_hash_table,
-						      region_id, sched_mode, op_type, prop);
+					      region_id, sched_mode, op_type, prop);
 	if (!domain || !domain->valid)
 		return INVALID_POS;
 
-	return wd_sched_domain_get_next_rr(domain);
+	/* No compat filtering needed - use original logic */
+	if (!skey || !skey->alg_name || !skey->ctxs)
+		return wd_sched_domain_get_next_rr(domain);
+
+	/* With compat filtering - iterate domain to find compatible ctx */
+	for (i = 0; i < domain->total_ctx_count; i++) {
+		ctx_idx = wd_sched_domain_get_next_rr(domain);
+		if (ctx_idx == INVALID_POS)
+			return INVALID_POS;
+		if (skey->ctxs[ctx_idx].drv &&
+		    wd_alg_match_drv(skey->ctxs[ctx_idx].drv, skey->alg_name))
+			return ctx_idx;
+	}
+
+	return INVALID_POS;  /* No compatible ctx in domain */
 }
 
 /**
@@ -1140,11 +1223,11 @@ static int session_sched_domain_init(struct wd_sched_ctx *sched_ctx,
 
 	/* Pre-fetch one sync context */
 	sync_ctx = session_sched_init_ctx(sched_ctx, skey->region_id, skey->type,
-	                      skey->ctx_prop, SCHED_MODE_SYNC);
+	                      skey->ctx_prop, SCHED_MODE_SYNC, skey);
 
 	/* Pre-fetch one async context */
 	async_ctx = session_sched_init_ctx(sched_ctx, skey->region_id, skey->type,
-	                       skey->ctx_prop, SCHED_MODE_ASYNC);
+	                       skey->ctx_prop, SCHED_MODE_ASYNC, skey);
 
 	if (sync_ctx == INVALID_POS && async_ctx == INVALID_POS) {
 		WD_ERR("there is no valid sync_ctx or async_ctx domain!\n");
@@ -1463,7 +1546,7 @@ static __u32 skey_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 	/* Check if we need to expand context pool */
 	if (min_load > HUNGRY_LOAD_THRESHOLD) {
 		/* Try to allocate new context from domain */
-		new_ctx = session_sched_init_ctx(sched_ctx, skey->region_id, skey->type, skey->ctx_prop, sched_mode);
+		new_ctx = session_sched_init_ctx(sched_ctx, skey->region_id, skey->type, skey->ctx_prop, sched_mode, skey);
 		if (new_ctx != INVALID_POS) {
 			if (wd_sched_skey_add_ctx(&domain->idx_cache, new_ctx) == 0) {
 				domain->expanded_count++;
@@ -1708,17 +1791,30 @@ static handle_t session_dev_sched_init(handle_t h_sched_ctx, void *sched_param)
  * @sched_key: Session key (cannot modify per API contract)
  * @sched_param: Scheduling parameters (cannot modify per API contract)
  */
+
 static void wd_sched_set_param(handle_t h_sched_ctx,
-			void *sched_key, void *sched_param)
+		void *sched_key, void *sched_param)
 {
 	struct wd_sched_params *params = (struct wd_sched_params *)sched_param;
 	struct wd_sched_key *skey = (struct wd_sched_key *)sched_key;
+	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
 
 	skey->pkt_size = params->pkt_size;
 	skey->is_stream = params->data_mode;
 	skey->prio_mode = params->prio_mode;
-}
 
+	/* Store compat filtering parameters */
+	skey->alg_name = params->alg_name;
+	skey->ctxs = params->ctxs;
+
+	/* If compat info provided, fix up pre-fetched ctxs */
+	if (skey->alg_name && skey->ctxs) {
+		wd_sched_skey_compat_filter(sched_ctx, skey,
+			&skey->sync_domain, SCHED_MODE_SYNC);
+		wd_sched_skey_compat_filter(sched_ctx, skey,
+			&skey->async_domain, SCHED_MODE_ASYNC);
+	}
+}
 static struct wd_sched sched_table[SCHED_POLICY_BUTT] = {
 	{
 		.name = "RR scheduler",

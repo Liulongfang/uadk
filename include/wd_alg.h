@@ -210,6 +210,7 @@ struct wd_drv_node {
 	struct wd_drv_node *next;
 };
 
+bool wd_alg_match_drv(struct wd_alg_driver *drv, const char *alg_name);
 int wd_get_drv_array(const char *alg_type, int task_type, char *drv_name,
 		     struct wd_alg_driver ***drv_array, __u32 *drv_count);
 void wd_put_drv_array(struct wd_alg_driver **drv_array, __u32 drv_count);
@@ -234,6 +235,15 @@ struct wd_alg_driver *wd_request_drv(const char	*alg_name, int drv_type);
  * Return check result.
  */
 bool wd_drv_alg_support(const char *alg_name, void *param);
+
+/**
+ * wd_alg_match_drv() - Check if a given algorithm matches a specific driver.
+ * @drv: Pointer to the driver instance
+ * @alg_name: Specific algorithm name to check (e.g., "cbc(aes)")
+ *
+ * Return: true if supported and available, false otherwise.
+ */
+bool wd_alg_match_drv(struct wd_alg_driver *drv, const char *alg_name);
 
 /*
  * wd_enable_drv() - Re-enable use of the current device driver.

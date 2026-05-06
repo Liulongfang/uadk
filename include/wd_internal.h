@@ -65,6 +65,9 @@ struct wd_sched_params {
 	__u32 pkt_size;
 	__u16 data_mode; //block mode or stream mode
 	__u16 prio_mode;
+	/* Compat filtering parameters for session-ctx matching */
+	const char *alg_name;
+	struct wd_ctx_internal *ctxs;
 };
 
 #ifdef __cplusplus
