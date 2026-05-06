@@ -978,33 +978,39 @@ void wd_release_alg_cap(struct wd_capability *head)
 
 struct wd_capability *wd_get_alg_cap(void)
 {
-	struct wd_alg_list *head = wd_get_alg_head();
-	struct wd_alg_list *pnext = head->next;
+	struct wd_drv_node *head = wd_get_alg_head();
+	struct wd_drv_node *drv_node = head->next;
 	struct wd_capability *cap_head = NULL;
 	struct wd_capability *cap_pnext = NULL;
 	struct wd_capability *cap_node;
+	int i;
 
-	while (pnext) {
-		cap_node = calloc(1, sizeof(struct wd_capability));
-		if (!cap_node) {
-			WD_ERR("fail to alloc wd capability head\n");
-			goto alloc_err;
+	while (drv_node) {
+		/* Traverse the static algorithm array inside each driver node */
+		for (i = 0; i < drv_node->alg_count; i++) {
+			cap_node = calloc(1, sizeof(struct wd_capability));
+			if (!cap_node) {
+				WD_ERR("fail to alloc wd capability head\n");
+				goto alloc_err;
+			}
+			/* Flatten the secondary structure into the original binary-tuple format */
+			(void)strcpy(cap_node->alg_name, drv_node->algs[i].alg_name);
+			(void)strcpy(cap_node->drv_name, drv_node->drv_name);
+			cap_node->available = drv_node->algs[i].available;
+			cap_node->priority = drv_node->priority;
+			cap_node->calc_type = drv_node->calc_type;
+			cap_node->next = NULL;
+
+			/* Append to the capability linked list */
+			if (!cap_head) {
+				cap_head = cap_node;
+				cap_pnext = cap_node;
+			} else {
+				cap_pnext->next = cap_node;
+				cap_pnext = cap_node;
+			}
 		}
-
-		(void)strcpy(cap_node->alg_name, pnext->alg_name);
-		(void)strcpy(cap_node->drv_name, pnext->drv_name);
-		cap_node->available = pnext->available;
-		cap_node->priority = pnext->priority;
-		cap_node->calc_type = pnext->calc_type;
-		cap_node->next = NULL;
-
-		pnext = pnext->next;
-		if (!cap_pnext) {
-			cap_head = cap_node;
-			cap_pnext = cap_node;
-		}
-		cap_pnext->next = cap_node;
-		cap_pnext = cap_node;
+		drv_node = drv_node->next;
 	}
 
 	return cap_head;

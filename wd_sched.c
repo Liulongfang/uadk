@@ -1085,7 +1085,7 @@ static __u32 session_sched_init_ctx(struct wd_sched_ctx *sched_ctx,
 	struct wd_sched_ctx_domain *domain = NULL;
 
 	if (region_id >= sched_ctx->region_num || sched_mode >= SCHED_MODE_BUTT ||
-	     op_type >= sched_ctx->type_num || prop >= UADK_CTX_MAX) {
+	     op_type >= sched_ctx->type_num || prop >= UADK_ALG_TYPE_MAX) {
 		WD_ERR("invalid: region: %d, mode: %d, type: %u!, prop: %u\n",
 		       region_id, sched_mode, op_type, prop);
 		return INVALID_POS;
@@ -1147,7 +1147,7 @@ static int session_sched_domain_init(struct wd_sched_ctx *sched_ctx,
 	                       skey->ctx_prop, SCHED_MODE_ASYNC);
 
 	if (sync_ctx == INVALID_POS && async_ctx == INVALID_POS) {
-		WD_ERR("failed to get valid sync_ctx or async_ctx!\n");
+		WD_ERR("there is no valid sync_ctx or async_ctx domain!\n");
 		return -WD_EINVAL;
 	}
 
@@ -1399,14 +1399,14 @@ static handle_t skey_sched_init(handle_t h_sched_ctx, void *sched_param)
 	skey = (struct wd_sched_key *)hskey;
 	def_prop = skey->ctx_prop;
 	/* Init and get ctx for every ctx mode */
-	for (i = 0; i < UADK_CTX_MAX; i++) {
+	for (i = 0; i < UADK_ALG_TYPE_MAX; i++) {
 		skey->ctx_prop = i;
 		ret = session_sched_domain_init(sched_ctx, skey);
-		if (ret != 0) {
-			WD_ERR("Can't to request prop=%d type ctx!\n", i);
+		if (ret != 0)
 			continue;
-		}
+
 		/* Request two Pre_fetch queues each time. */
+		WD_INFO("Successful to request prop=%d type ctx!\n", i);
 		req_ctx_num += 2;
 	}
 	if (!req_ctx_num) {
@@ -1531,14 +1531,14 @@ static handle_t loop_sched_init(handle_t h_sched_ctx, void *sched_param)
 	skey = (struct wd_sched_key *)hskey;
 	def_prop = skey->ctx_prop;
 	/* Init and get ctx for every ctx mode */
-	for (i = 0; i < UADK_CTX_MAX; i++) {
+	for (i = 0; i < UADK_ALG_TYPE_MAX; i++) {
 		skey->ctx_prop = i;
 		ret = session_sched_domain_init(sched_ctx, skey);
-		if (ret != 0) {
-			WD_ERR("Can't to request prop=%d type ctx!\n", i);
+		if (ret != 0)
 			continue;
-		}
+
 		/* Request two Pre_fetch queues each time. */
+		WD_INFO("Successful to request prop=%d type ctx!\n", i);
 		req_ctx_num += 2;
 	}
 	if (!req_ctx_num) {
@@ -1836,8 +1836,8 @@ int wd_sched_rr_instance(const struct wd_sched *sched, struct sched_params *para
 		return -WD_EINVAL;
 	}
 
-	if (param->ctx_prop < 0 || param->ctx_prop > UADK_CTX_SOFT)
-		param->ctx_prop = UADK_CTX_HW;
+	if (param->ctx_prop < 0 || param->ctx_prop > UADK_ALG_SOFT)
+		param->ctx_prop = UADK_ALG_HW;
 
 	/* Insert or get domain from hash table using four dimensions */
 	domain = wd_sched_hash_table_insert(sched_ctx->domain_hash_table,
@@ -1950,12 +1950,12 @@ struct wd_sched *wd_sched_rr_alloc(__u8 sched_type, __u8 type_num,
 
 	if (sched_type == SCHED_POLICY_DEV) {
 		/* Device mode: region_num is actually device count */
-		estimated_entries = region_num * type_num * SCHED_MODE_BUTT * UADK_CTX_MAX;
+		estimated_entries = region_num * type_num * SCHED_MODE_BUTT * UADK_ALG_TYPE_MAX;
 	} else {
 		/* NUMA mode: validate region_num */
 		if (numa_num_check(region_num))
 			goto err_out;
-		estimated_entries = region_num * type_num * SCHED_MODE_BUTT * UADK_CTX_MAX;
+		estimated_entries = region_num * type_num * SCHED_MODE_BUTT * UADK_ALG_TYPE_MAX;
 	}
 
 	/* Create single global hash table */

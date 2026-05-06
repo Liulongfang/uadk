@@ -36,23 +36,26 @@ libwd_la_SOURCES=wd.c wd_mempool.c wd_bmm.c wd_bmm.h wd.h wd_alg.c wd_alg.h	\
 
 libwd_crypto_la_SOURCES=wd_cipher.c wd_cipher.h wd_cipher_drv.h \
 			wd_aead.c wd_aead.h wd_aead_drv.h \
+			wd.c wd.h wd_alg.h \
 			wd_util.c wd_util.h \
-			wd_sched.c wd_sched.h \
-			wd.c wd.h
+			wd_sched.c wd_sched.h
 
 libhisi_sec_la_SOURCES=drv/hisi_sec.c drv/hisi_qm_udrv.c \
 		lib/crypto/aes.c lib/crypto/sm4.c lib/crypto/galois.c \
-		hisi_qm_udrv.h wd_cipher_drv.h wd_aead_drv.h aes.h sm4.h galois.h
+		hisi_qm_udrv.h wd_cipher_drv.h wd_aead_drv.h aes.h sm4.h galois.h \
+		drv/wd_drv.h drv/wd_drv.c
 
 if ARCH_ARM64
 libisa_ce_la_SOURCES=arm_arch_ce.h drv/isa_ce_sm3.c drv/isa_ce_sm3_armv8.S isa_ce_sm3.h \
-		drv/isa_ce_sm4.c drv/isa_ce_sm4_armv8.S drv/isa_ce_sm4.h wd_util.c wd_util.h
+		drv/isa_ce_sm4.c drv/isa_ce_sm4_armv8.S drv/isa_ce_sm4.h wd_util.c wd_util.h \
+		drv/wd_drv.h drv/wd_drv.c
 
 libisa_sve_la_SOURCES=drv/hash_mb/hash_mb.c wd_digest_drv.h drv/hash_mb/hash_mb.h \
 		drv/hash_mb/sm3_sve_common.S drv/hash_mb/sm3_mb_asimd_x1.S \
 		drv/hash_mb/sm3_mb_asimd_x4.S drv/hash_mb/sm3_mb_sve.S \
 		drv/hash_mb/md5_sve_common.S drv/hash_mb/md5_mb_asimd_x1.S \
-		drv/hash_mb/md5_mb_asimd_x4.S drv/hash_mb/md5_mb_sve.S
+		drv/hash_mb/md5_mb_asimd_x4.S drv/hash_mb/md5_mb_sve.S \
+		drv/wd_drv.h drv/wd_drv.c
 endif
 
 if WD_STATIC_DRV

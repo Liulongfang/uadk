@@ -6,6 +6,7 @@
 #define _GNU_SOURCE
 #include <dirent.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -19,10 +20,21 @@
 #define DEV_SVA_SIZE		32
 #define STR_DECIMAL		0xA
 
-static struct wd_alg_list alg_list_head;
-static struct wd_alg_list *alg_list_tail = &alg_list_head;
+/* Registry structure (List manager) */
+struct wd_alg_registry {
+	struct wd_drv_node *head;
+	struct wd_drv_node *tail;
+	pthread_mutex_t mutex;
+	int drv_type_num;             /* Number of unique driver nodes in the list */
+};
 
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct wd_drv_node drv_list_head;
+static struct wd_alg_registry alg_registry = {
+	.head = &drv_list_head,
+	.tail = &drv_list_head,
+	.mutex = PTHREAD_MUTEX_INITIALIZER,
+	.drv_type_num = 0,
+};
 
 struct acc_alg_item {
 	const char *name;
@@ -212,47 +224,33 @@ static bool wd_alg_check_available(int calc_type,
 	return ret;
 }
 
-static bool wd_alg_driver_match(struct wd_alg_driver *drv,
-	struct wd_alg_list *node)
+/**
+ * Mapping from task_type to calc_type filter:
+ *
+ *   TASK_HW    →  calc_type == UADK_ALG_HW
+ *   TASK_INSTR →  calc_type != UADK_ALG_HW  (CE_INSTR | SVE_INSTR | SOFT)
+ *   TASK_MIX   →  all calc_type values
+ */
+static inline bool wd_alg_drv_type_match(int task_type, int drv_calc_type)
 {
-	if (strcmp(drv->alg_name, node->alg_name))
+	switch (task_type) {
+	case TASK_HW:
+		return drv_calc_type == UADK_ALG_HW;
+	case TASK_INSTR:
+		return drv_calc_type != UADK_ALG_HW;
+	case TASK_MIX:
+		return true;
+	default:
 		return false;
-
-	if (strcmp(drv->drv_name, node->drv_name))
-		return false;
-
-	if (drv->priority != node->priority)
-		return false;
-
-	if (drv->calc_type != node->calc_type)
-		return false;
-
-	return true;
-}
-
-static bool wd_alg_repeat_check(struct wd_alg_driver *drv)
-{
-	struct wd_alg_list *npre = &alg_list_head;
-	struct wd_alg_list *pnext = NULL;
-
-	pthread_mutex_lock(&mutex);
-	pnext = npre->next;
-	while (pnext) {
-		if (wd_alg_driver_match(drv, pnext)) {
-			pthread_mutex_unlock(&mutex);
-			return true;
-		}
-		npre = pnext;
-		pnext = pnext->next;
 	}
-	pthread_mutex_unlock(&mutex);
-
-	return false;
 }
 
 int wd_alg_driver_register(struct wd_alg_driver *drv)
 {
-	struct wd_alg_list *new_alg;
+	struct wd_drv_node *node = alg_registry.head->next;
+	struct wd_drv_node *target_node = NULL;
+	char alg_type[ALG_NAME_SIZE];
+	int i, ret;
 
 	if (!drv) {
 		WD_ERR("invalid: register drv is NULL!\n");
@@ -264,155 +262,285 @@ int wd_alg_driver_register(struct wd_alg_driver *drv)
 		return -WD_EINVAL;
 	}
 
-	if (wd_alg_repeat_check(drv))
-		return 0;
-
-	new_alg = calloc(1, sizeof(struct wd_alg_list));
-	if (!new_alg) {
-		WD_ERR("failed to alloc alg driver memory!\n");
-		return -WD_ENOMEM;
+	ret = wd_get_alg_type(drv->alg_name, alg_type);
+	if (ret) {
+		WD_ERR("failed to get alg_type for %s!\n", drv->alg_name);
+		return -WD_EINVAL;
 	}
 
-	(void)wd_get_alg_type(drv->alg_name, new_alg->alg_type);
-	strncpy(new_alg->alg_name, drv->alg_name, ALG_NAME_SIZE - 1);
-	strncpy(new_alg->drv_name, drv->drv_name, DEV_NAME_LEN - 1);
-	new_alg->priority = drv->priority;
-	new_alg->calc_type = drv->calc_type;
-	new_alg->drv = drv;
-	new_alg->refcnt = 0;
-	new_alg->next = NULL;
-
-	new_alg->available = wd_alg_check_available(drv->calc_type,
-			     drv->alg_name, drv->drv_name);
-	if (!new_alg->available) {
-		free(new_alg);
-		return -WD_ENODEV;
+	/* Search for an existing node with the same drv_name */
+	pthread_mutex_lock(&alg_registry.mutex);
+	while (node) {
+		if (strcmp(node->drv_name, drv->drv_name) == 0) {
+			target_node = node;
+			break;
+		}
+		node = node->next;
 	}
 
-	pthread_mutex_lock(&mutex);
-	alg_list_tail->next = new_alg;
-	alg_list_tail = new_alg;
-	pthread_mutex_unlock(&mutex);
+	if (target_node) {
+		/* Consistency check: a driver must strictly have uniform properties */
+		if (strcmp(target_node->alg_type, alg_type) != 0 ||
+		    target_node->priority != drv->priority ||
+		    target_node->calc_type != drv->calc_type) {
+			WD_ERR("invalid: driver %s attributes mismatch on re-register!\n", drv->drv_name);
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return -WD_EINVAL;
+		}
 
+		/* Check if alg_name already exists in this driver's array */
+		for (i = 0; i < target_node->alg_count; i++) {
+			if (strcmp(target_node->algs[i].alg_name, drv->alg_name) == 0) {
+				/* Algorithm already registered, skip duplicate */
+				pthread_mutex_unlock(&alg_registry.mutex);
+				return 0;
+			}
+		}
+
+		/* Check array capacity */
+		if (target_node->alg_count >= MAX_DRV_ALG_NUM) {
+			WD_ERR("driver %s alg array overflow (max %d)!\n", drv->drv_name, MAX_DRV_ALG_NUM);
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return -WD_ENOMEM;
+		}
+
+		/* Add new algorithm to existing driver node */
+		strncpy(target_node->algs[target_node->alg_count].alg_name, drv->alg_name, ALG_NAME_SIZE - 1);
+		target_node->algs[target_node->alg_count].available =
+			wd_alg_check_available(drv->calc_type, drv->alg_name, drv->drv_name);
+		if (!target_node->algs[target_node->alg_count].available) {
+			WD_ERR("driver %s alg %s not available on current system!\n", drv->drv_name, drv->alg_name);
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return -WD_ENODEV;
+		}
+		target_node->alg_count++;
+	} else {
+		/* Create a new driver node */
+		target_node = calloc(1, sizeof(struct wd_drv_node));
+		if (!target_node) {
+			WD_ERR("failed to alloc drv node memory!\n");
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return -WD_ENOMEM;
+		}
+
+		strncpy(target_node->drv_name, drv->drv_name, DEV_NAME_LEN - 1);
+		strncpy(target_node->alg_type, alg_type, ALG_NAME_SIZE - 1);
+		target_node->priority = drv->priority;
+		target_node->calc_type = drv->calc_type;
+		target_node->drv = drv;
+		target_node->refcnt = 0;
+		target_node->alg_count = 0;
+
+		/* Add the first algorithm to the new node's array */
+		strncpy(target_node->algs[0].alg_name, drv->alg_name, ALG_NAME_SIZE - 1);
+		target_node->algs[0].available =
+			wd_alg_check_available(drv->calc_type, drv->alg_name, drv->drv_name);
+		if (!target_node->algs[0].available) {
+			free(target_node);
+			WD_ERR("driver %s alg %s not available on current system!\n", drv->drv_name, drv->alg_name);
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return -WD_ENODEV;
+		}
+		target_node->alg_count = 1;
+		target_node->next = NULL;
+
+		/* Append to list tail */
+		alg_registry.tail->next = target_node;
+		alg_registry.tail = target_node;
+		alg_registry.drv_type_num++;
+	}
+
+	pthread_mutex_unlock(&alg_registry.mutex);
 	return 0;
 }
 
 void wd_alg_driver_unregister(struct wd_alg_driver *drv)
 {
-	struct wd_alg_list *npre = &alg_list_head;
-	struct wd_alg_list *pnext = npre->next;
+	struct wd_drv_node *npre = alg_registry.head;
+	struct wd_drv_node *pnext = npre->next;
+	int i;
 
-	/* Alg driver list has no drivers */
 	if (!pnext || !drv)
 		return;
 
-	pthread_mutex_lock(&mutex);
+	pthread_mutex_lock(&alg_registry.mutex);
+	/* Find the driver node matching drv_name */
 	while (pnext) {
-		if (wd_alg_driver_match(drv, pnext))
+		if (strcmp(drv->drv_name, pnext->drv_name) == 0)
 			break;
 		npre = pnext;
 		pnext = pnext->next;
 	}
 
-	/* The current algorithm is not registered */
 	if (!pnext) {
-		pthread_mutex_unlock(&mutex);
+		pthread_mutex_unlock(&alg_registry.mutex);
 		return;
 	}
 
-	/* Used to locate the problem and ensure symmetrical use driver */
-	if (pnext->refcnt > 0)
-		WD_ERR("driver<%s> still in used: %d\n", pnext->drv_name, pnext->refcnt);
+	/* Find and remove the specific alg_name from the node's array */
+	for (i = 0; i < pnext->alg_count; i++) {
+		if (strcmp(pnext->algs[i].alg_name, drv->alg_name) == 0) {
+			/* Compact the array: move the last element to the removed slot */
+			if (i != pnext->alg_count - 1)
+				pnext->algs[i] = pnext->algs[pnext->alg_count - 1];
+			pnext->alg_count--;
+			break;
+		}
+	}
 
-	if (pnext == alg_list_tail)
-		alg_list_tail = npre;
+	/* If the driver no longer supports any algorithms, remove the entire node */
+	if (pnext->alg_count == 0) {
+		if (pnext->refcnt > 0)
+			WD_ERR("driver<%s> still in used: %d\n", pnext->drv_name, pnext->refcnt);
 
-	npre->next = pnext->next;
-	free(pnext);
-	pthread_mutex_unlock(&mutex);
+		if (pnext == alg_registry.tail)
+			alg_registry.tail = npre;
+
+		npre->next = pnext->next;
+		free(pnext);
+		if (alg_registry.drv_type_num > 0)
+			alg_registry.drv_type_num--;
+	}
+
+	pthread_mutex_unlock(&alg_registry.mutex);
 }
 
-struct wd_alg_list *wd_get_alg_head(void)
+struct wd_drv_node *wd_get_alg_head(void)
 {
-	return &alg_list_head;
+	return alg_registry.head;
+}
+
+/**
+ * wd_alg_match_drv() - Check if a given algorithm match a specific driver.
+ * @drv: Pointer to the driver instance
+ * @alg_name: Specific algorithm name to check (e.g., "cbc(aes)")
+ *
+ * Uses the new hierarchical structure: finds the driver node, then searches
+ * its internal static algorithm array.
+ *
+ * Return: true if supported and available, false otherwise.
+ */
+bool wd_alg_match_drv(struct wd_alg_driver *drv, const char *alg_name)
+{
+	struct wd_drv_node *node;
+	int i;
+
+	if (!drv || !alg_name)
+		return false;
+
+	pthread_mutex_lock(&alg_registry.mutex);
+	node = alg_registry.head->next;
+	while (node) {
+		if (node->drv == drv) {
+			/* Found the driver node, now search its algs array */
+			for (i = 0; i < node->alg_count; i++) {
+				if (!strcmp(node->algs[i].alg_name, alg_name) &&
+				    node->algs[i].available) {
+					pthread_mutex_unlock(&alg_registry.mutex);
+					return true;
+				}
+			}
+			/* Driver found, but algorithm not in its array or not available */
+			pthread_mutex_unlock(&alg_registry.mutex);
+			return false;
+		}
+		node = node->next;
+	}
+	pthread_mutex_unlock(&alg_registry.mutex);
+
+	return false;
 }
 
 bool wd_drv_alg_support(const char *alg_name, void *param)
 {
 	struct wd_ctx_config_internal *config = param;
-	struct wd_alg_list *head = &alg_list_head;
-	struct wd_alg_list *pnext = head->next;
-	struct wd_alg_driver *drv;
-	__u32 i;
+	struct wd_drv_node *head = alg_registry.head;
+	struct wd_drv_node *node;
+	__u32 i, j;
 
 	if (!alg_name || !config)
 		return false;
 
+	/* Check whether the currently allocated ctxs supports the specified algorithm. */
 	for (i = 0; i < config->ctx_num; i++) {
-		drv = config->ctxs[i].drv;
-		while (pnext) {
-			if (!strcmp(alg_name, pnext->alg_name) &&
-			     !strcmp(drv->drv_name, pnext->drv_name)) {
-				return true;
+		if (!config->ctxs[i].drv)
+			continue;
+		node = head->next;
+		while (node) {
+			/* Query the position of the driver matching the context in the list. */
+			if (strcmp(config->ctxs[i].drv->drv_name, node->drv_name) == 0) {
+				for (j = 0; j < node->alg_count; j++) {
+					if (!strcmp(alg_name, node->algs[j].alg_name) &&
+					    node->algs[j].available)
+						return true;
+				}
+				break;
 			}
-			pnext = pnext->next;
+			node = node->next;
 		}
 	}
-
 	return false;
 }
 
 void wd_enable_drv(struct wd_alg_driver *drv)
 {
-	struct wd_alg_list *head = &alg_list_head;
-	struct wd_alg_list *pnext = head->next;
+	struct wd_drv_node *node = alg_registry.head->next;
+	int i;
 
-	if (!pnext || !drv)
+	if (!node || !drv)
 		return;
 
-	pthread_mutex_lock(&mutex);
-	while (pnext) {
-		if (wd_alg_driver_match(drv, pnext))
+	pthread_mutex_lock(&alg_registry.mutex);
+	while (node) {
+		if (strcmp(drv->drv_name, node->drv_name) == 0)
 			break;
-		pnext = pnext->next;
+		node = node->next;
 	}
 
-	if (pnext)
-		pnext->available = wd_alg_check_available(drv->calc_type,
-				   drv->alg_name, drv->drv_name);
-	pthread_mutex_unlock(&mutex);
+	if (node) {
+		/* Re-evaluate availability for each algorithm upon enabling */
+		for (i = 0; i < node->alg_count; i++) {
+			node->algs[i].available =
+				wd_alg_check_available(node->calc_type,
+						       node->algs[i].alg_name,
+						       node->drv_name);
+		}
+	}
+	pthread_mutex_unlock(&alg_registry.mutex);
 }
 
 void wd_disable_drv(struct wd_alg_driver *drv)
 {
-	struct wd_alg_list *head = &alg_list_head;
-	struct wd_alg_list *pnext = head->next;
+	struct wd_drv_node *node = alg_registry.head->next;
+	int i;
 
-	if (!pnext || !drv)
+	if (!node || !drv)
 		return;
 
-	pthread_mutex_lock(&mutex);
-	while (pnext) {
-		if (wd_alg_driver_match(drv, pnext) && pnext->available)
+	pthread_mutex_lock(&alg_registry.mutex);
+	while (node) {
+		if (strcmp(drv->drv_name, node->drv_name) == 0)
 			break;
-		pnext = pnext->next;
+		node = node->next;
 	}
 
-	if (pnext)
-		pnext->available = false;
-	pthread_mutex_unlock(&mutex);
+	if (node) {
+		/* Disable all algorithms for this driver */
+		for (i = 0; i < node->alg_count; i++)
+			node->algs[i].available = false;
+	}
+	pthread_mutex_unlock(&alg_registry.mutex);
 }
 
 struct wd_alg_driver *wd_request_drv(const char *alg_name, int drv_type)
 {
-	struct wd_alg_list *head = &alg_list_head;
-	struct wd_alg_list *pnext = head->next;
-	struct wd_alg_list *select_node = NULL;
+	struct wd_drv_node *node = alg_registry.head->next;
 	struct wd_alg_driver *drv = NULL;
 	int tmp_priority = -1;
+	int i;
 
-	if (!pnext) {
-		WD_ERR("invalid: requset drv pnext is NULL!\n");
+	if (!node) {
+		WD_ERR("invalid: request drv node is NULL!\n");
 		return NULL;
 	}
 
@@ -421,94 +549,80 @@ struct wd_alg_driver *wd_request_drv(const char *alg_name, int drv_type)
 		return NULL;
 	}
 
-	/* Check the list to get an best driver */
-	pthread_mutex_lock(&mutex);
-	while (pnext) {
-		if (!strcmp(alg_name, pnext->alg_name) && pnext->available) {
-			/* HW driver   mean to used hardware dev */
-			if (drv_type == ALG_DRV_HW && pnext->drv->calc_type == UADK_ALG_HW)
-				select_node = pnext;
-			/* CE driver   mean to used CE dev */
-			else if (drv_type == ALG_DRV_CE_INS && pnext->drv->calc_type == UADK_ALG_CE_INSTR)
-				select_node = pnext;
-			/* SVE driver   mean to used SVE dev */
-			else if (drv_type == ALG_DRV_SVE_INS && pnext->drv->calc_type == UADK_ALG_SVE_INSTR)
-				select_node = pnext;
-			/* INS driver mean to used CE and SVE dev */
-			else if (drv_type == ALG_DRV_INS && (pnext->drv->calc_type == UADK_ALG_CE_INSTR ||
-				   pnext->drv->calc_type == UADK_ALG_SVE_INSTR))
-				select_node = pnext;
-			/* Soft driver mean to used Soft, CE and SVE dev */
-			else if (drv_type == ALG_DRV_SOFT && pnext->drv->calc_type != UADK_ALG_HW)
-				select_node = pnext;
-			/* Fallback driver mean to used Soft or CE dev */
-			else if (drv_type == ALG_DRV_FB && (pnext->drv->calc_type == UADK_ALG_SOFT ||
-				    pnext->drv->calc_type == UADK_ALG_CE_INSTR))
-				select_node = pnext;
+	pthread_mutex_lock(&alg_registry.mutex);
+	while (node) {
+		bool type_match = false;
 
-			if (select_node && select_node->drv->priority > tmp_priority) {
-				drv = select_node->drv;
-				tmp_priority = select_node->drv->priority;
+		/* Check calc_type against requested drv_type */
+		if (drv_type == ALG_DRV_HW && node->calc_type == UADK_ALG_HW)
+			type_match = true;
+		else if (drv_type == ALG_DRV_CE_INS && node->calc_type == UADK_ALG_CE_INSTR)
+			type_match = true;
+		else if (drv_type == ALG_DRV_SVE_INS && node->calc_type == UADK_ALG_SVE_INSTR)
+			type_match = true;
+		else if (drv_type == ALG_DRV_INS && (node->calc_type == UADK_ALG_CE_INSTR ||
+				   node->calc_type == UADK_ALG_SVE_INSTR))
+			type_match = true;
+		else if (drv_type == ALG_DRV_SOFT && node->calc_type != UADK_ALG_HW)
+			type_match = true;
+		else if (drv_type == ALG_DRV_FB && (node->calc_type == UADK_ALG_SOFT ||
+			    node->calc_type == UADK_ALG_CE_INSTR))
+			type_match = true;
+
+		if (type_match && node->drv->priority > tmp_priority) {
+			/* Check if this driver supports the requested alg_name and it's available */
+			for (i = 0; i < node->alg_count; i++) {
+				if (!strcmp(alg_name, node->algs[i].alg_name) &&
+				    node->algs[i].available) {
+					drv = node->drv;
+					tmp_priority = node->drv->priority;
+					break;
+				}
 			}
 		}
-		pnext = pnext->next;
+		node = node->next;
 	}
 
-	if (select_node)
-		select_node->refcnt++;
-	pthread_mutex_unlock(&mutex);
-
-	return drv;
-}
-
-void wd_release_drv(struct wd_alg_driver *drv)
-{
-	struct wd_alg_list *head = &alg_list_head;
-	struct wd_alg_list *pnext = head->next;
-	struct wd_alg_list *select_node = NULL;
-
-	if (!pnext || !drv)
-		return;
-
-	pthread_mutex_lock(&mutex);
-	while (pnext) {
-		if (wd_alg_driver_match(drv, pnext) && pnext->refcnt > 0) {
-			select_node = pnext;
-			break;
+	/* Increment refcnt on the selected driver node */
+	if (drv) {
+		node = alg_registry.head->next;
+		while (node) {
+			if (node->drv == drv) {
+				node->refcnt++;
+				break;
+			}
+			node = node->next;
 		}
-		pnext = pnext->next;
 	}
 
-	if (select_node)
-		select_node->refcnt--;
-	pthread_mutex_unlock(&mutex);
+	pthread_mutex_unlock(&alg_registry.mutex);
+	return drv;
 }
 
 int wd_alg_get_dev_usage(const char *dev_name, const char *alg_type, __u8 alg_op_type)
 {
-	struct wd_alg_list *pnext = alg_list_head.next;
+	struct wd_drv_node *node = alg_registry.head->next;
 	struct hisi_dev_usage dev_usage;
 	struct wd_alg_driver *drv;
-	size_t len;
 
 	if (!dev_name || !alg_type) {
 		WD_ERR("dev_name or alg_type is NULL!\n");
 		return -WD_EINVAL;
 	}
 
-	while (pnext) {
-		len = strlen(pnext->drv_name);
-		if (!strncmp(dev_name, pnext->drv_name, len) && *(dev_name + len) == '-' &&
-		    !strcmp(alg_type, pnext->alg_type) && pnext->drv->priv)
+	while (node) {
+		/* Match dev_name and alg_type at the driver node level */
+		if (strstr(dev_name, node->drv_name) &&
+		    !strcmp(alg_type, node->alg_type))
 			break;
 
-		pnext = pnext->next;
+		node = node->next;
 	}
 
-	if (!pnext)
+	if (!node)
 		return -WD_EACCES;
 
-	drv = pnext->drv;
+	drv = node->drv;
 	if (!drv->get_usage)
 		return -WD_EINVAL;
 
@@ -517,4 +631,202 @@ int wd_alg_get_dev_usage(const char *dev_name, const char *alg_type, __u8 alg_op
 	dev_usage.dev_name = dev_name;
 
 	return drv->get_usage(&dev_usage);
+}
+
+/**
+ * wd_put_drv_array() - Release driver array allocated by wd_get_drv_array().
+ *
+ * Frees the driver pointer array. Does NOT touch the drivers themselves
+ * (refcount managed separately by wd_alg_drv_ref_inc/dec).
+ *
+ * @drv_array: Driver array from wd_get_drv_array()
+ * @drv_count: Number of entries (unused, for API symmetry)
+ */
+void wd_put_drv_array(struct wd_alg_driver **drv_array, __u32 drv_count)
+{
+	__u32 i;
+
+	for (i = 0; i < drv_count; i++)
+		drv_array[i] = NULL;
+	free(drv_array);
+}
+
+/**
+ * wd_get_drv_array() - Discover all unique drivers matching alg_type and task_type.
+ *
+ * @alg_type:  Algorithm class string ("cipher", "digest", "aead", "comp", etc.)
+ * @task_type: TASK_HW (hardware only), TASK_INSTR (instruction only), TASK_MIX (all)
+ * @drv_array: Output - newly allocated array of unique wd_alg_driver* pointers,
+ *             caller must free with plain free()
+ * @drv_count: Output - number of unique drivers found
+ *
+ * Traverses wd_drv_node list once:
+ *   1. Matches by alg_type at node level (no need to traverse algs array for this).
+ *   2. Filters by task_type using wd_alg_drv_type_match().
+ *   3. Deduplicates is inherently solved (each node is a unique driver).
+ *
+ * This is a PURE QUERY — no reference counting or resource allocation side effects.
+ * Reference counting is done separately by wd_alg_drv_ref_inc/dec().
+ *
+ * Return: 0 on success, negative on failure.
+ */
+int wd_get_drv_array(const char *alg_type, int task_type, char *drv_name,
+		     struct wd_alg_driver ***drv_array, __u32 *drv_count)
+{
+	struct wd_drv_node *head, *node;
+	struct wd_alg_driver **drivers;
+	__u32 max_driver_count, current_count = 0;
+	int i;
+
+	if (!alg_type || !drv_array || !drv_count) {
+		WD_ERR("invalid: NULL parameter!\n");
+		return -WD_EINVAL;
+	}
+
+	*drv_array = NULL;
+	*drv_count = 0;
+	head = wd_get_alg_head();
+	if (!head) {
+		WD_ERR("failed to get alg list head!\n");
+		return -WD_EINVAL;
+	}
+
+	max_driver_count = alg_registry.drv_type_num;
+	WD_INFO("drivers list drv_type_num: %d\n", alg_registry.drv_type_num);
+
+	if (max_driver_count == 0) {
+		WD_ERR("no drivers registered for alg_type: %s\n", alg_type);
+		return -WD_EINVAL;
+	}
+
+	drivers = calloc(max_driver_count, sizeof(struct wd_alg_driver *));
+	if (!drivers) {
+		WD_ERR("failed to allocate drivers array!\n");
+		return -WD_ENOMEM;
+	}
+
+	/*
+	 * Single traversal of wd_drv_node list:
+	 * - Match by alg_type at node level
+	 * - Filter by task_type
+	 * - Deduplication inherently solved
+	 */
+	node = head->next;
+	while (node) {
+		if (strcmp(node->alg_type, alg_type) == 0 &&
+		    wd_alg_drv_type_match(task_type, node->calc_type)) {
+
+			if (drv_name && strcmp(node->drv_name, drv_name) != 0)
+				continue;
+
+			/* Check if at least one algorithm in this driver is available */
+			bool has_available_alg = false;
+			for (i = 0; i < node->alg_count; i++) {
+				if (node->algs[i].available) {
+					has_available_alg = true;
+					break;
+				}
+			}
+
+			if (!has_available_alg) {
+				node = node->next;
+				continue;
+			}
+
+			if (current_count >= max_driver_count) {
+				WD_ERR("driver array overflow!\n");
+				goto query_failed;
+			}
+			drivers[current_count] = node->drv;
+			current_count++;
+		}
+		node = node->next;
+	}
+
+	if (current_count == 0) {
+		WD_ERR("no available drivers for alg_type: %s, task_type: %d\n",
+		       alg_type, task_type);
+		goto query_failed;
+	}
+
+	WD_INFO("Driver discovery: %u unique drivers for alg_type=%s\n",
+		current_count, alg_type);
+	*drv_array = drivers;
+	*drv_count = current_count;
+	return 0;
+
+query_failed:
+	free(drivers);
+	return -WD_EINVAL;
+}
+
+/**
+ * wd_alg_drv_ref_inc() - Increment reference count for each unique driver.
+ *
+ * @drv_array: Array of unique driver pointers
+ * @drv_count: Number of drivers in the array
+ *
+ * For each unique driver, finds its node in wd_drv_node list and
+ * increments refcnt by exactly 1. This ensures refcnt reflects the
+ * number of configs using the driver, not the number of ctxs.
+ *
+ * Must be called after wd_get_drv_array() and after ctx binding.
+ */
+void wd_alg_drv_ref_inc(struct wd_alg_driver **drv_array, __u32 drv_count)
+{
+	struct wd_drv_node *node;
+	__u32 i;
+
+	if (!drv_array || drv_count == 0)
+		return;
+
+	pthread_mutex_lock(&alg_registry.mutex);
+	for (i = 0; i < drv_count; i++) {
+		if (!drv_array[i])
+			continue;
+		/* Directly find the unique driver node and increment refcnt */
+		node = alg_registry.head->next;
+		while (node) {
+			if (node->drv == drv_array[i]) {
+				node->refcnt++;
+				break;
+			}
+			node = node->next;
+		}
+	}
+	pthread_mutex_unlock(&alg_registry.mutex);
+}
+
+/**
+ * wd_alg_drv_ref_dec() - Decrement reference count for each unique driver.
+ *
+ * @drv_array: Array of unique driver pointers
+ * @drv_count: Number of drivers in the array
+ *
+ * Inverse of wd_alg_drv_ref_inc(). Decrements refcnt by 1 for each
+ * unique driver. Must be called during cleanup.
+ */
+void wd_alg_drv_ref_dec(struct wd_alg_driver **drv_array, __u32 drv_count)
+{
+	struct wd_drv_node *node;
+	__u32 i;
+
+	if (!drv_array || drv_count == 0)
+		return;
+
+	pthread_mutex_lock(&alg_registry.mutex);
+	for (i = 0; i < drv_count; i++) {
+		if (!drv_array[i])
+			continue;
+		/* Directly find the unique driver node and decrement refcnt */
+		node = alg_registry.head->next;
+		while (node) {
+			if (node->drv == drv_array[i] && node->refcnt > 0) {
+				node->refcnt--;
+				break;
+			}
+			node = node->next;
+		}
+	}
+	pthread_mutex_unlock(&alg_registry.mutex);
 }

@@ -92,7 +92,6 @@ struct wd_ctx {
 	handle_t ctx;
 	__u8 op_type;
 	__u8 ctx_mode;
-	__u8 ctx_type;
 };
 
 /**
@@ -124,31 +123,16 @@ struct wd_ctx_config {
 	struct wd_cap_config *cap;
 };
 
-/* 0x0 mean calloc init value */
-enum wd_ctx_property {
-	UADK_CTX_HW = 0x0,
-	UADK_CTX_CE_INS = 0x1,
-	UADK_CTX_SVE_INS = 0x2,
-	UADK_CTX_SOFT = 0x3,
-	UADK_CTX_MAX
-};
-
 /**
  * struct wd_ctx_nums - Define the ctx sets numbers.
  * @sync_ctx_num: The ctx numbers which are used for sync mode for each
  * ctx sets.
  * @async_ctx_num: The ctx numbers which are used for async mode for each
  * ctx sets.
- * @ctx_prop: Indicates the properties of the current queue
- * @ctx_begin: The encoding starting position of the current device ctx
- * @other_ctx: Other types of queues configured
  */
 struct wd_ctx_nums {
 	__u32 sync_ctx_num;
 	__u32 async_ctx_num;
-	__u8 ctx_prop;
-	__u16 ctx_begin;
-	struct wd_ctx_nums *other_ctx;
 };
 
 /**
@@ -194,8 +178,29 @@ struct wd_sched {
 	handle_t h_sched_ctx;
 };
 
-typedef int (*wd_alg_init)(struct wd_ctx_config *config, struct wd_sched *sched);
+typedef int (*wd_alg_init)(struct wd_ctx_config *config, struct wd_sched *sched, void *attrs);
 typedef int (*wd_alg_poll_ctx)(__u32 idx, __u32 expt, __u32 *count);
+
+/**
+ * struct wd_init_attrs - Algorithm initialization attributes.
+ *
+ * Updated: No longer contains driver field.
+ * Initialization path determined solely by task_type.
+ */
+struct wd_init_attrs {
+	__u32 sched_type;
+	__u32 task_type;
+	char alg[CRYPTO_MAX_ALG_NAME];
+	struct wd_sched *sched;
+	struct wd_ctx_params *ctx_params;
+	struct wd_ctx_config *ctx_config;
+	wd_alg_init alg_init;
+	wd_alg_poll_ctx alg_poll_ctx;
+
+	struct wd_ctx_config_internal *ctx_config_internal;
+	struct wd_alg_driver **drv_array;
+	__u32 drv_count; 
+};
 
 #ifdef __cplusplus
 }

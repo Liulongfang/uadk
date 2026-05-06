@@ -119,17 +119,6 @@ struct wd_msg_handle {
 	int (*recv)(handle_t sess, void *msg);
 };
 
-struct wd_init_attrs {
-	__u32 sched_type;
-	__u32 task_type;
-	char alg[CRYPTO_MAX_ALG_NAME];
-	struct wd_sched *sched;
-	struct wd_ctx_params *ctx_params;
-	struct wd_ctx_config *ctx_config;
-	wd_alg_init alg_init;
-	wd_alg_poll_ctx alg_poll_ctx;
-};
-
 /*
  * wd_init_ctx_config() - Init internal ctx configuration.
  * @in:	ctx configuration in global setting.
@@ -425,17 +414,6 @@ int wd_alg_attrs_init(struct wd_init_attrs *attrs);
 void wd_alg_attrs_uninit(struct wd_init_attrs *attrs);
 
 /**
- * wd_alg_drv_bind() - Request the ctxs and initialize the sched_domain
- *                     with the given devices list, ctxs number and numa mask.
- * @ctx_type: the type of ctx specified by the current algorithm.
- * @alg_name: the name of the algorithm specified by the task.
- *
- * Return device driver if succeed and other NULL if fail.
- */
-struct wd_alg_driver *wd_alg_drv_bind(__u8 ctx_prop, char *alg_name);
-void wd_alg_drv_unbind(struct wd_alg_driver *drv);
-
-/**
  * wd_alg_init_driver() - Initialize the current device driver according
  *			to the obtained queue resource and the applied driver.
  * @config: device resources requested by the current algorithm.
@@ -508,9 +486,13 @@ static inline void wd_ctx_spin_unlock(struct wd_ctx_internal *ctx, int type)
 
 int wd_mem_ops_init(handle_t h_ctx, struct wd_mm_ops *mm_ops, int mem_type);
 
-int wd_queue_is_busy(struct wd_soft_ctx *sctx);
-int wd_get_sqe_from_queue(struct wd_soft_ctx *sctx, __u32 tag_id);
-int wd_put_sqe_to_queue(struct wd_soft_ctx *sctx, __u32 *tag_id, __u8 *result);
+int  wd_alg_drv_discover(struct wd_init_attrs *attrs);
+void wd_alg_drv_undiscover(struct wd_init_attrs *attrs);
+int  wd_alg_ctx_init(struct wd_init_attrs *attrs);
+void wd_alg_ctx_uninit(struct wd_init_attrs *attrs);
+int  wd_ctx_bind_drivers(struct wd_ctx_config_internal *config,
+			 struct wd_alg_driver **drv_array, __u32 drv_count);
+void wd_ctx_unbind_drivers(struct wd_ctx_config_internal *config);
 
 #ifdef __cplusplus
 }

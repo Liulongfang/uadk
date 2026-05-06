@@ -17,7 +17,6 @@ extern "C" {
 #define DEVICE_REGION_MAX		16
 #define DECIMAL_NUMBER		10
 #define MAX_FD_NUM	65535
-#define MAX_SOFT_QUEUE_LENGTH	1024U
 
 struct wd_ctx_h {
 	int fd;
@@ -30,33 +29,6 @@ struct wd_ctx_h {
 	void *priv;
 };
 
-struct wd_soft_sqe {
-	__u8 used;
-	__u8 result;
-	__u8 complete;
-	__u32 id;
-};
-
-/**
- * default queue length set to 1024
- */
-struct wd_soft_ctx {
-	int fd;
-	pthread_spinlock_t slock;
-	__u32 head;
-	struct wd_soft_sqe qfifo[MAX_SOFT_QUEUE_LENGTH];
-	pthread_spinlock_t rlock;
-	__u32 tail;
-	__u32 run_num;
-	void *priv;
-};
-
-struct wd_ce_ctx {
-	int fd;
-	char *drv_name;
-	void *priv;
-};
-
 struct wd_ctx_internal {
 	__u8 op_type;
 	__u8 ctx_mode;
@@ -66,8 +38,8 @@ struct wd_ctx_internal {
 	__u16 sqn;
 	pthread_spinlock_t lock;
 	struct wd_alg_driver *drv;
-	void *extend_ops;
 	void *drv_priv;
+	void *extend_ops;
 };
 
 struct wd_ctx_config_internal {
@@ -78,6 +50,9 @@ struct wd_ctx_config_internal {
 	bool epoll_en;
 	unsigned long *msg_cnt;
 	char *alg_name;
+
+	struct wd_alg_driver **drv_array;
+	__u32 drv_count;
 };
 
 struct wd_datalist {
