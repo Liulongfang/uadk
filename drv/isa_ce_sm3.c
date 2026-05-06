@@ -17,6 +17,7 @@
 #include "drv/isa_ce_sm3.h"
 #include "drv/wd_digest_drv.h"
 #include "wd_digest.h"
+#include "wd_drv.h"
 
 #define SM3_ALIGN_MASK 63U
 
@@ -43,6 +44,8 @@ static struct wd_alg_driver sm3_ce_alg_driver = {
 	.send = sm3_ce_drv_send,
 	.recv = sm3_ce_drv_recv,
 	.get_usage = sm3_ce_get_usage,
+	.alloc_ctx = wd_soft_alloc_ctx,
+	.free_ctx = wd_soft_free_ctx,
 };
 
 static void __attribute__((constructor)) sm3_ce_probe(void)

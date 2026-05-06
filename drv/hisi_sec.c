@@ -10,6 +10,7 @@
 #include "crypto/aes.h"
 #include "crypto/galois.h"
 #include "hisi_qm_udrv.h"
+#include "wd_drv.h"
 
 #define BIT(nr)			(1UL << (nr))
 #define SEC_DIGEST_ALG_OFFSET	11
@@ -797,12 +798,15 @@ static int sec_aead_get_extend_ops(void *ops)
 	.queue_num = SEC_CTX_Q_NUM_DEF,\
 	.op_type_num = 1,\
 	.fallback = 0,\
+	.init_state = 0,\
 	.init = hisi_sec_init,\
 	.exit = hisi_sec_exit,\
 	.send = alg_type##_send,\
 	.recv = alg_type##_recv,\
 	.get_usage = hisi_sec_get_usage,\
 	.get_extend_ops = sec_aead_get_extend_ops,\
+	.alloc_ctx = wd_hw_alloc_ctx, \
+	.free_ctx = wd_hw_free_ctx, \
 }
 
 static struct wd_alg_driver cipher_alg_driver[] = {
@@ -3911,10 +3915,12 @@ static int hisi_sec_init(void *conf, void *priv)
 		return -WD_EINVAL;
 	}
 
+	WD_INFO("hisi_sec_init: ctx type: %u for %u ctx.\n",
+			config->ctxs[0].ctx_type, config->ctx_num);
 	qm_priv.sqe_size = sizeof(struct hisi_sec_sqe);
 	/* allocate qp for each context */
 	for (i = 0; i < config->ctx_num; i++) {
-		if (config->ctxs[i].ctx_type != UADK_CTX_HW ||
+		if (config->ctxs[i].ctx_type != UADK_ALG_HW ||
 		     !config->ctxs[i].ctx)
 			continue;
 		h_ctx = config->ctxs[i].ctx;

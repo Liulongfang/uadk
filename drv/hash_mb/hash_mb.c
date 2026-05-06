@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "hash_mb.h"
+#include "../wd_drv.h"
 
 #define MIN(a, b)		(((a) > (b)) ? (b) : (a))
 #define IPAD_VALUE		0x36

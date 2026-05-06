@@ -327,7 +327,7 @@ int dae_init(void *conf, void *priv)
 	qm_priv.sqe_size = sizeof(struct dae_sqe);
 	/* Allocate qp for each context */
 	for (i = 0; i < config->ctx_num; i++) {
-		if (config->ctxs[i].ctx_type != UADK_CTX_HW ||
+		if (config->ctxs[i].ctx_type != UADK_ALG_HW ||
 		     !config->ctxs[i].ctx)
 			continue;
 		h_ctx = config->ctxs[i].ctx;

@@ -11,10 +11,10 @@
  * Copyright 2024 Huawei Technologies Co.,Ltd. All rights reserved.
  */
 
-#include "wd_alg.h"
 #include "drv/wd_cipher_drv.h"
 #include "isa_ce_sm4.h"
 #include "wd_cipher.h"
+#include "wd_drv.h"
 
 #define SM4_ENCRYPT	1
 #define SM4_DECRYPT	0
@@ -433,6 +433,8 @@ static int cipher_recv(handle_t ctx, void *msg)
 	.exit = isa_ce_exit,\
 	.send = alg_type##_send,\
 	.recv = alg_type##_recv,\
+	.alloc_ctx = wd_soft_alloc_ctx, \
+	.free_ctx = wd_soft_free_ctx, \
 }
 
 static struct wd_alg_driver cipher_alg_driver[] = {
