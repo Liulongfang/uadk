@@ -8,7 +8,6 @@
 #include <dirent.h>
 #include <dlfcn.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <string.h>
 #include <ctype.h>
 #include "wd_sched.h"
@@ -70,27 +69,6 @@ static const char *wd_env_name[WD_TYPE_MAX] = {
 	"WD_AGG_CTX_NUM",
 	"WD_UDMA_CTX_NUM",
 	"WD_JOIN_GATHER_CTX_NUM",
-};
-
-struct async_task {
-	__u32 idx;
-};
-
-struct async_task_queue {
-	struct async_task *head;
-	int depth;
-	/* the producer offset of task queue */
-	int prod;
-	/* the consumer offset of task queue */
-	int cons;
-	int cur_task;
-	int left_task;
-	int end;
-	sem_t empty_sem;
-	sem_t full_sem;
-	pthread_mutex_t lock;
-	pthread_t tid;
-	int (*alg_poll_ctx)(__u32, __u32, __u32 *);
 };
 
 struct drv_lib_list {
@@ -784,17 +762,6 @@ static int str_to_bool(const char *s, bool *target)
 	return 0;
 }
 
-int wd_parse_async_poll_en(struct wd_env_config *config, const char *s)
-{
-	int ret;
-
-	ret = str_to_bool(s, &config->enable_internal_poll);
-	if (ret)
-		WD_ERR("failed to parse async poll enable flag(%s)!\n", s);
-
-	return ret;
-}
-
 static int parse_num_on_numa(const char *s, int *num, int *node)
 {
 	char *sep, *start, *left;
@@ -1036,41 +1003,6 @@ int wd_parse_ctx_num(struct wd_env_config *config, const char *s)
 	return parse_ctx_num(config, s);
 }
 
-int wd_parse_async_poll_num(struct wd_env_config *config, const char *s)
-{
-	struct wd_env_config_per_numa *config_numa;
-	char *left, *section, *start;
-	int node, poll_num, ret;
-
-	if (!config->enable_internal_poll) {
-		WD_ERR("internal poll not enabled, skip parse poll number!\n");
-		return 0;
-	}
-
-	start = strdup(s);
-	if (!start)
-		return -ENOMEM;
-
-	left = start;
-	while ((section = strsep(&left, ","))) {
-		ret = parse_num_on_numa(section, &poll_num, &node);
-		if (ret)
-			goto out;
-		config_numa = wd_get_config_numa(config, node);
-		if (!config_numa) {
-			ret = -WD_EINVAL;
-			goto out;
-		}
-		config_numa->async_poll_num = poll_num;
-	}
-
-	free(start);
-	return 0;
-out:
-	free(start);
-	return ret;
-}
-
 static int wd_parse_env(struct wd_env_config *config)
 {
 	const struct wd_config_variable *var;
@@ -1119,8 +1051,6 @@ static int wd_parse_ctx_attr(struct wd_env_config *env_config,
 
 	/* Use default sched and disable internal poll */
 	env_config->sched = NULL;
-	env_config->enable_internal_poll = 0;
-	config_numa->async_poll_num = 0;
 
 	return 0;
 }
@@ -1348,21 +1278,17 @@ static int wd_init_sched_config(struct wd_env_config *config,
 {
 	struct wd_env_config_per_numa *config_numa;
 	int i, j, ret, max_node, type_num;
-	void *func = NULL;
 
 	type_num = config->op_type_num;
 	max_node = numa_max_node() + 1;
 	if (max_node <= 0)
 		return -WD_EINVAL;
 
-	if (!config->enable_internal_poll)
-		func = alg_poll_ctx;
-
 	config->internal_sched = false;
 	if (!config->sched) {
 		WD_ERR("no sched is specified, alloc a default sched!\n");
 		config->sched = wd_sched_rr_alloc(SCHED_POLICY_RR, type_num,
-						  max_node, func);
+						  max_node, alg_poll_ctx);
 		if (!config->sched)
 			return -WD_ENOMEM;
 
@@ -1389,339 +1315,6 @@ err_release_sched:
 	return ret;
 }
 
-static struct async_task_queue *find_async_queue(struct wd_env_config *config,
-						 __u32 idx)
-{
-	struct wd_env_config_per_numa *config_numa;
-	struct wd_ctx_range **ctx_table;
-	struct async_task_queue *head;
-	unsigned long offset = 0;
-	__u32 i, num = 0;
-
-	FOREACH_NUMA(i, config, config_numa) {
-		num += config_numa->sync_ctx_num + config_numa->async_ctx_num;
-		if (idx < num)
-			break;
-	}
-
-	if (i == config->numa_num) {
-		WD_ERR("failed to find a proper numa node!\n");
-		return NULL;
-	}
-
-	if (!config_numa->async_poll_num) {
-		WD_ERR("invalid: async_poll_num of numa is zero!\n");
-		return NULL;
-	}
-
-	ctx_table = config_numa->ctx_table;
-	for (i = 0; i < config_numa->op_type_num; i++) {
-		if (idx <= ctx_table[CTX_MODE_ASYNC][i].end &&
-		    idx >= ctx_table[CTX_MODE_ASYNC][i].begin) {
-			offset = (idx - ctx_table[CTX_MODE_ASYNC][i].begin) %
-				 config_numa->async_poll_num;
-			break;
-		}
-	}
-
-	if (i == config_numa->op_type_num) {
-		WD_ERR("failed to find async queue for ctx: idx %u!\n", idx);
-		return NULL;
-	}
-
-	head = (struct async_task_queue *)config_numa->async_task_queue_array;
-
-	return head + offset;
-}
-
-int wd_add_task_to_async_queue(struct wd_env_config *config, __u32 idx)
-{
-	struct async_task_queue *task_queue;
-	struct async_task *task;
-	int curr_prod, ret;
-
-	if (!config->enable_internal_poll)
-		return 0;
-
-	task_queue = find_async_queue(config, idx);
-	if (!task_queue)
-		return -WD_EINVAL;
-
-	ret = sem_wait(&task_queue->empty_sem);
-	if (ret) {
-		WD_ERR("failed to wait empty_sem!\n");
-		return ret;
-	}
-
-	pthread_mutex_lock(&task_queue->lock);
-
-	/* get an available async task and fill ctx idx */
-	curr_prod = task_queue->prod;
-	task = task_queue->head + curr_prod;
-	task->idx = idx;
-
-	/* update global information of task queue */
-	task_queue->prod = (curr_prod + 1) % task_queue->depth;
-	task_queue->cur_task++;
-	task_queue->left_task--;
-
-	pthread_mutex_unlock(&task_queue->lock);
-
-	ret = sem_post(&task_queue->full_sem);
-	if (ret) {
-		WD_ERR("failed to post full_sem!\n");
-		goto err_out;
-	}
-
-	return 0;
-
-err_out:
-	pthread_mutex_lock(&task_queue->lock);
-	task_queue->left_task++;
-	task_queue->cur_task--;
-	task_queue->prod = curr_prod;
-	pthread_mutex_unlock(&task_queue->lock);
-	sem_post(&task_queue->empty_sem);
-
-	return ret;
-}
-
-static void *async_poll_process_func(void *args)
-{
-	struct async_task_queue *task_queue = args;
-	struct async_task *head, *task;
-	__u32 count;
-	int cons, ret;
-
-	while (1) {
-		if (sem_wait(&task_queue->full_sem)) {
-			if (errno == EINTR) {
-				continue;
-			}
-		}
-		if (__atomic_load_n(&task_queue->end, __ATOMIC_ACQUIRE)) {
-			__atomic_store_n(&task_queue->end, 0, __ATOMIC_RELEASE);
-			goto out;
-		}
-
-		pthread_mutex_lock(&task_queue->lock);
-
-		/* async sending message isn't submitted yet */
-		if (task_queue->cons == task_queue->prod) {
-			pthread_mutex_unlock(&task_queue->lock);
-			sem_post(&task_queue->full_sem);
-			continue;
-		}
-
-		cons = task_queue->cons;
-		head = task_queue->head;
-		task = head + cons;
-
-		task_queue->cons = (cons + 1) % task_queue->depth;
-		task_queue->cur_task--;
-		task_queue->left_task++;
-
-		pthread_mutex_unlock(&task_queue->lock);
-
-		ret = task_queue->alg_poll_ctx(task->idx, 1, &count);
-		if (ret < 0) {
-			pthread_mutex_lock(&task_queue->lock);
-			task_queue->cons = cons;
-			task_queue->cur_task++;
-			task_queue->left_task--;
-			pthread_mutex_unlock(&task_queue->lock);
-			if (ret == -WD_EAGAIN) {
-				sem_post(&task_queue->full_sem);
-				continue;
-			} else
-				goto out;
-		}
-
-		if (sem_post(&task_queue->empty_sem))
-			goto out;
-	}
-out:
-	return NULL;
-}
-
-static int wd_init_one_task_queue(struct async_task_queue *task_queue,
-				  void *alg_poll_ctx)
-
-{
-	struct async_task *head;
-	pthread_t thread_id;
-	pthread_attr_t attr;
-	int depth, ret;
-
-	task_queue->depth = depth = WD_ASYNC_DEF_QUEUE_DEPTH;
-
-	head = calloc(task_queue->depth, sizeof(*head));
-	if (!head)
-		return -WD_ENOMEM;
-
-	task_queue->head = head;
-	task_queue->left_task = depth;
-	task_queue->alg_poll_ctx = alg_poll_ctx;
-
-	if (sem_init(&task_queue->empty_sem, 0, depth)) {
-		WD_ERR("failed to init empty_sem!\n");
-		goto err_free_head;
-	}
-
-	if (sem_init(&task_queue->full_sem, 0, 0)) {
-		WD_ERR("failed to init full_sem!\n");
-		goto err_uninit_empty_sem;
-	}
-
-	if (pthread_mutex_init(&task_queue->lock, NULL)) {
-		WD_ERR("failed to init task queue's mutex lock!\n");
-		goto err_uninit_full_sem;
-	}
-
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	task_queue->tid = 0;
-	if (pthread_create(&thread_id, &attr, async_poll_process_func,
-			   task_queue)) {
-		WD_ERR("failed to create poll thread!\n");
-		goto err_destory_mutex;
-	}
-
-	task_queue->tid = thread_id;
-	pthread_attr_destroy(&attr);
-
-	return 0;
-
-err_destory_mutex:
-	pthread_attr_destroy(&attr);
-	pthread_mutex_destroy(&task_queue->lock);
-err_uninit_full_sem:
-	sem_destroy(&task_queue->full_sem);
-err_uninit_empty_sem:
-	sem_destroy(&task_queue->empty_sem);
-err_free_head:
-	free(head);
-	ret = -errno;
-	return ret;
-}
-
-static void wd_uninit_one_task_queue(struct async_task_queue *task_queue)
-{
-	/*
-	 * If there's no async task, async_poll_process_func() is sleeping
-	 * on task_queue->full_sem. It'll cause that threads could not
-	 * be end and memory leak.
-	 */
-	sem_post(&task_queue->full_sem);
-	__atomic_store_n(&task_queue->end, 1, __ATOMIC_RELEASE);
-	while (__atomic_load_n(&task_queue->end, __ATOMIC_ACQUIRE))
-		sched_yield();
-
-	pthread_mutex_destroy(&task_queue->lock);
-	sem_destroy(&task_queue->full_sem);
-	sem_destroy(&task_queue->empty_sem);
-	free(task_queue->head);
-	task_queue->head = NULL;
-}
-
-static int wd_init_async_polling_thread_per_numa(struct wd_env_config *config,
-						 struct wd_env_config_per_numa *config_numa,
-						 void *alg_poll_ctx)
-{
-	struct async_task_queue *task_queue, *queue_head;
-	int i, j, ret;
-	double num;
-
-	if (!config_numa->async_ctx_num)
-		return 0;
-
-	if (!config_numa->async_poll_num) {
-		WD_ERR("invalid async poll num (%lu) is set.\n",
-		       config_numa->async_poll_num);
-		WD_ERR("change to default value: %d\n", WD_ASYNC_DEF_POLL_NUM);
-		config_numa->async_poll_num = WD_ASYNC_DEF_POLL_NUM;
-	}
-
-	num = MIN(config_numa->async_poll_num, config_numa->async_ctx_num);
-
-	/* make max task queues as the number of async ctxs */
-	queue_head = calloc(config_numa->async_ctx_num, sizeof(*queue_head));
-	if (!queue_head)
-		return -WD_ENOMEM;
-
-	task_queue = queue_head;
-	for (i = 0; i < num; task_queue++, i++) {
-		ret = wd_init_one_task_queue(task_queue, alg_poll_ctx);
-		if (ret) {
-			for (j = 0; j < i; task_queue++, j++)
-				wd_uninit_one_task_queue(task_queue);
-			free(queue_head);
-			return ret;
-		}
-	}
-
-	config_numa->async_task_queue_array = (void *)queue_head;
-
-	return 0;
-}
-
-static void wd_uninit_async_polling_thread_per_numa(struct wd_env_config *cfg,
-						    struct wd_env_config_per_numa *config_numa)
-{
-	struct async_task_queue *task_queue, *head;
-	double num;
-	int i;
-
-	if (!config_numa || !config_numa->async_task_queue_array)
-		return;
-
-	head = config_numa->async_task_queue_array;
-	task_queue = head;
-	num = MIN(config_numa->async_poll_num, config_numa->async_ctx_num);
-
-	for (i = 0; i < num; task_queue++, i++)
-		wd_uninit_one_task_queue(task_queue);
-	free(head);
-	config_numa->async_task_queue_array = NULL;
-}
-
-static int wd_init_async_polling_thread(struct wd_env_config *config,
-					void *alg_poll_ctx)
-{
-	struct wd_env_config_per_numa *config_numa;
-	int i, ret;
-
-	if (!config->enable_internal_poll)
-		return 0;
-
-	FOREACH_NUMA(i, config, config_numa) {
-		ret = wd_init_async_polling_thread_per_numa(config, config_numa,
-							    alg_poll_ctx);
-		if (ret)
-			goto out;
-	}
-
-	return 0;
-
-out:
-	FOREACH_NUMA(i, config, config_numa)
-		wd_uninit_async_polling_thread_per_numa(config, config_numa);
-
-	return ret;
-}
-
-static void wd_uninit_async_polling_thread(struct wd_env_config *config)
-{
-	struct wd_env_config_per_numa *config_numa;
-	int i;
-
-	if (!config->enable_internal_poll)
-		return;
-
-	FOREACH_NUMA(i, config, config_numa)
-		wd_uninit_async_polling_thread_per_numa(config, config_numa);
-}
-
 static int wd_init_resource(struct wd_env_config *config,
 			    const struct wd_alg_ops *ops)
 {
@@ -1739,14 +1332,8 @@ static int wd_init_resource(struct wd_env_config *config,
 	if (ret)
 		goto err_uninit_sched;
 
-	ret = wd_init_async_polling_thread(config, ops->alg_poll_ctx);
-	if (ret)
-		goto err_uninit_alg;
-
 	return 0;
 
-err_uninit_alg:
-	ops->alg_uninit();
 err_uninit_sched:
 	wd_uninit_sched_config(config);
 err_uninit_ctx:
@@ -1757,7 +1344,6 @@ err_uninit_ctx:
 static void wd_uninit_resource(struct wd_env_config *config,
 			       const struct wd_alg_ops *ops)
 {
-	wd_uninit_async_polling_thread(config);
 	ops->alg_uninit();
 	wd_uninit_sched_config(config);
 	wd_free_ctx(config);
@@ -1811,7 +1397,7 @@ int wd_alg_get_env_param(struct wd_env_config *env_config,
 		return -WD_EINVAL;
 	}
 
-	*is_enable = env_config->enable_internal_poll;
+	*is_enable = 0;
 
 	config_numa = wd_get_config_numa(env_config, attr.node);
 	if (!config_numa)

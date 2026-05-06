@@ -502,9 +502,6 @@ int wd_do_rsa_async(handle_t sess, struct wd_rsa_req *req)
 	}
 
 	wd_dfx_msg_cnt(config, WD_CTX_CNT_NUM, idx);
-	ret = wd_add_task_to_async_queue(&wd_rsa_env_config, idx);
-	if (ret)
-		goto fail_with_msg;
 
 	return WD_SUCCESS;
 
@@ -1266,15 +1263,10 @@ void wd_rsa_get_prikey(handle_t sess, struct wd_rsa_prikey **prikey)
 	*prikey = ((struct wd_rsa_sess *)sess)->prikey;
 }
 
-static const struct wd_config_variable table[] = {
-	{ .name = "WD_RSA_CTX_NUM",
-	  .def_val = "sync:2@0,async:2@0",
-	  .parse_fn = wd_parse_ctx_num
-	},
-	{ .name = "WD_RSA_ASYNC_POLL_EN",
-	  .def_val = "0",
-	  .parse_fn = wd_parse_async_poll_en
-	}
+static const struct wd_config_variable table = {
+	.name = "WD_RSA_CTX_NUM",
+	.def_val = "sync:2@0,async:2@0",
+	.parse_fn = wd_parse_ctx_num
 };
 
 static const struct wd_alg_ops wd_rsa_ops = {
@@ -1289,8 +1281,8 @@ int wd_rsa_env_init(struct wd_sched *sched)
 {
 	wd_rsa_env_config.sched = sched;
 
-	return wd_alg_env_init(&wd_rsa_env_config, table,
-			       &wd_rsa_ops, ARRAY_SIZE(table), NULL);
+	return wd_alg_env_init(&wd_rsa_env_config, &table,
+			       &wd_rsa_ops, 1, NULL);
 }
 
 void wd_rsa_env_uninit(void)
@@ -1307,8 +1299,8 @@ int wd_rsa_ctx_num_init(__u32 node, __u32 type, __u32 num, __u8 mode)
 	if (ret)
 		return ret;
 
-	return wd_alg_env_init(&wd_rsa_env_config, table,
-			       &wd_rsa_ops, ARRAY_SIZE(table), &ctx_attr);
+	return wd_alg_env_init(&wd_rsa_env_config, &table,
+			       &wd_rsa_ops, 1, &ctx_attr);
 }
 
 void wd_rsa_ctx_num_uninit(void)

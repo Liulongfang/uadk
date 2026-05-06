@@ -78,15 +78,10 @@ struct wd_env_config_per_numa {
 	/* Resource begin */
 	struct uacce_dev *dev;
 	int dev_num;
-	/* This can be made statically currently */
-	unsigned long async_poll_num;
-	void *async_task_queue_array;
 };
 
 struct wd_env_config {
 	struct wd_env_config_per_numa *config_per_numa;
-	/* Let's make it as a gobal config, not per numa */
-	bool enable_internal_poll;
 
 	/* resource config */
 	struct wd_sched *sched;
@@ -273,40 +268,6 @@ int wd_check_datalist(struct wd_datalist *head, __u64 size);
  */
 int wd_parse_ctx_num(struct wd_env_config *config, const char *s);
 
-/*
- * wd_parse_async_poll_en() - Parse async polling thread related environment
- * 			      variable and store it.
- * @config: Pointer of wd_env_config which is used to store environment
- *          variable information.
- * @s: Related environment variable string.
- *
- * More information, please see docs/wd_environment_variable.
- */
-int wd_parse_async_poll_en(struct wd_env_config *config, const char *s);
-
-/*
- * wd_parse_async_poll_num() - Parse async polling thread related environment
- *                            variable and store it.
- * @config: Pointer of wd_env_config which is used to store environment
- *          variable information.
- * @s: Related environment variable string.
- *
- * More information, please see docs/wd_environment_variable.
- */
-int wd_parse_async_poll_num(struct wd_env_config *config, const char *s);
-
-/*
- * wd_alg_env_init() - Init wd algorithm environment variable configurations.
- * 		       This is a help function which can be used by specific
- * 		       wd algorithm APIs.
- * @env_config: Pointer of wd_env_config which is used to store environment
- *          variable information.
- * @table: Table which is used to define specific environment variable、its
- * 	   default value and related parsing operations.
- * @ops: Define functions which will be used by specific wd algorithm
- * 	 environment init.
- * @table_size: Size of above table.
- */
 int wd_alg_env_init(struct wd_env_config *env_config,
 		    const struct wd_config_variable *table,
 		    const struct wd_alg_ops *ops,
@@ -322,15 +283,6 @@ int wd_alg_env_init(struct wd_env_config *env_config,
  */
 void wd_alg_env_uninit(struct wd_env_config *env_config,
 		       const struct wd_alg_ops *ops);
-
-/*
- * wd_add_task_to_async_queue() - Add an async request to its related async
- * 				  task queue.
- * @config: Pointer of wd_env_config which is used to store environment
- *          variable information.
- * @idx: Index of ctx in config.
- */
-int wd_add_task_to_async_queue(struct wd_env_config *config, __u32 idx);
 
 /*
  * dump_env_info() - dump wd algorithm ctx info.

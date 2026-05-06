@@ -2319,9 +2319,6 @@ int wd_do_ecc_async(handle_t sess, struct wd_ecc_req *req)
 	}
 
 	wd_dfx_msg_cnt(config, WD_CTX_CNT_NUM, idx);
-	ret = wd_add_task_to_async_queue(&wd_ecc_env_config, idx);
-	if (ret)
-		goto fail_with_msg;
 
 	return WD_SUCCESS;
 
@@ -2401,15 +2398,10 @@ int wd_ecc_poll(__u32 expt, __u32 *count)
 	return wd_ecc_setting.sched.poll_policy(h_sched_sess, expt, count);
 }
 
-static const struct wd_config_variable table[] = {
-	{ .name = "WD_ECC_CTX_NUM",
-	  .def_val = "sync:2@0,async:2@0",
-	  .parse_fn = wd_parse_ctx_num
-	},
-	{ .name = "WD_ECC_ASYNC_POLL_EN",
-	  .def_val = "0",
-	  .parse_fn = wd_parse_async_poll_en
-	}
+static const struct wd_config_variable table = {
+	.name = "WD_ECC_CTX_NUM",
+	.def_val = "sync:2@0,async:2@0",
+	.parse_fn = wd_parse_ctx_num
 };
 
 static const struct wd_alg_ops wd_ecc_ops = {
@@ -2424,8 +2416,8 @@ int wd_ecc_env_init(struct wd_sched *sched)
 {
 	wd_ecc_env_config.sched = sched;
 
-	return wd_alg_env_init(&wd_ecc_env_config, table,
-			       &wd_ecc_ops, ARRAY_SIZE(table), NULL);
+	return wd_alg_env_init(&wd_ecc_env_config, &table,
+			       &wd_ecc_ops, 1, NULL);
 }
 
 void wd_ecc_env_uninit(void)
@@ -2442,8 +2434,8 @@ int wd_ecc_ctx_num_init(__u32 node, __u32 type, __u32 num, __u8 mode)
 	if (ret)
 		return ret;
 
-	return wd_alg_env_init(&wd_ecc_env_config, table,
-			       &wd_ecc_ops, ARRAY_SIZE(table), &ctx_attr);
+	return wd_alg_env_init(&wd_ecc_env_config, &table,
+			       &wd_ecc_ops, 1, &ctx_attr);
 }
 
 void wd_ecc_ctx_num_uninit(void)
