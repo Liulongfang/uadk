@@ -5,8 +5,6 @@
 
 #include "sec_uadk_benchmark.h"
 #include "include/wd_cipher.h"
-#include "include/wd_digest.h"
-#include "include/wd_aead.h"
 #include "include/wd_sched.h"
 #include "include/wd_bmm.h"
 
@@ -70,7 +68,6 @@ static unsigned int g_pktlen;
 static unsigned int g_alg;
 static unsigned int g_algtype;
 static unsigned int g_optype;
-static unsigned int g_maclen;
 static unsigned int g_dev_id;
 static unsigned int g_data_fmt;
 
@@ -120,55 +117,16 @@ struct aead_alg_info aead_info[] = {
 	},
 };
 
-static u32 get_aead_mac_len(int algtype)
-{
-	int table_size = sizeof(aead_info) / sizeof(aead_info[0]);
-	int i;
-
-	for (i = 0; i < table_size; i++) {
-		if (algtype == aead_info[i].index)
-			return aead_info[i].mac_len;
-	}
-
-	SEC_TST_PRT("failed to get the aead mac len\n");
-
-	return -1;
-}
-
-static char *get_aead_alg_name(int algtype)
-{
-	int table_size = sizeof(aead_info) / sizeof(aead_info[0]);
-	int i;
-
-	for (i = 0; i < table_size; i++) {
-		if (algtype == aead_info[i].index)
-			return aead_info[i].name;
-	}
-
-	SEC_TST_PRT("failed to get the aead alg name\n");
-
-	return NULL;
-}
 
 static void *cipher_async_cb(struct wd_cipher_req *req, void *data)
 {
 	return NULL;
 }
 
-static void *aead_async_cb(struct wd_aead_req *req, void *data)
-{
-	return NULL;
-}
-
-static void *digest_async_cb(void *data)
-{
-	return NULL;
-}
 
 static int sec_uadk_param_parse(thread_data *tddata, struct acc_option *options)
 {
 	u32 algtype = options->algtype;
-	u32 optype = options->optype;
 	bool is_union = false;
 	u32 out_bytes = 32;
 	u8 keysize = 0;
@@ -455,51 +413,6 @@ static int sec_uadk_param_parse(thread_data *tddata, struct acc_option *options)
 		mode = WD_CIPHER_GCM;
 		alg = WD_CIPHER_AES;
 		break;
-	case AES_128_CBC_SHA256_HMAC:
-		keysize = 16;
-		ivsize = 16;
-		mode = WD_CIPHER_CBC;
-		alg = WD_CIPHER_AES;
-		is_union = true;
-		dalg = WD_DIGEST_SHA256;
-		dmode = WD_DIGEST_HMAC;
-		break;
-	case AES_192_CBC_SHA256_HMAC:
-		keysize = 24;
-		ivsize = 16;
-		mode = WD_CIPHER_CBC;
-		alg = WD_CIPHER_AES;
-		is_union = true;
-		dalg = WD_DIGEST_SHA256;
-		dmode = WD_DIGEST_HMAC;
-		break;
-	case AES_256_CBC_SHA256_HMAC:
-		keysize = 32;
-		ivsize = 16;
-		mode = WD_CIPHER_CBC;
-		alg = WD_CIPHER_AES;
-		is_union = true;
-		dalg = WD_DIGEST_SHA256;
-		dmode = WD_DIGEST_HMAC;
-		break;
-	case AES_128_CBC_SHA1_HMAC:
-		keysize = 16;
-		ivsize = 16;
-		mode = WD_CIPHER_CBC;
-		alg = WD_CIPHER_AES;
-		is_union = true;
-		dalg = WD_DIGEST_SHA1;
-		dmode = WD_DIGEST_HMAC;
-		break;
-	case SM4_CBC_SM3_HMAC:
-		keysize = 16;
-		ivsize = 16;
-		mode = WD_CIPHER_CBC;
-		alg = WD_CIPHER_SM4;
-		is_union = true;
-		dalg = WD_DIGEST_SM3;
-		dmode = WD_DIGEST_HMAC;
-		break;
 	case SM4_128_CCM:
 		keysize = 16;
 		ivsize = 16;
@@ -511,60 +424,6 @@ static int sec_uadk_param_parse(thread_data *tddata, struct acc_option *options)
 		ivsize = 12;
 		mode = WD_CIPHER_GCM;
 		alg = WD_CIPHER_SM4;
-		break;
-	case SM3_ALG:		// digest mode is optype
-		keysize = 4;
-		mode = optype;
-		out_bytes = 32;
-		alg = WD_DIGEST_SM3;
-		break;
-	case MD5_ALG:
-		keysize = 4;
-		out_bytes = 16;
-		mode = optype;
-		alg = WD_DIGEST_MD5;
-		break;
-	case SHA1_ALG:
-		keysize = 4;
-		out_bytes = 20;
-		mode = optype;
-		alg = WD_DIGEST_SHA1;
-		break;
-	case SHA256_ALG:
-		keysize = 4;
-		out_bytes = 32;
-		mode = optype;
-		alg = WD_DIGEST_SHA256;
-		break;
-	case SHA224_ALG:
-		keysize = 4;
-		out_bytes = 28;
-		mode = optype;
-		alg = WD_DIGEST_SHA224;
-		break;
-	case SHA384_ALG:
-		keysize = 4;
-		out_bytes = 48;
-		mode = optype;
-		alg = WD_DIGEST_SHA384;
-		break;
-	case SHA512_ALG:
-		keysize = 4;
-		out_bytes = 64;
-		mode = optype;
-		alg = WD_DIGEST_SHA512;
-		break;
-	case SHA512_224:
-		keysize = 4;
-		out_bytes = 28;
-		mode = optype;
-		alg = WD_DIGEST_SHA512_224;
-		break;
-	case SHA512_256:
-		keysize = 4;
-		out_bytes = 32;
-		mode = optype;
-		alg = WD_DIGEST_SHA512_256;
 		break;
 	default:
 		SEC_TST_PRT("failed to set sec alg\n");
@@ -737,22 +596,6 @@ static int init_ctx_config(struct acc_option *options)
 			g_sched = wd_sched_rr_alloc(SCHED_POLICY_DEV, SEC_OP_TYPE_MAX,
 						    max_node, wd_cipher_poll_ctx);
 		break;
-	case AEAD_TYPE:
-		if (options->mem_type == UADK_AUTO)
-			g_sched = wd_sched_rr_alloc(SCHED_POLICY_RR, SEC_OP_TYPE_MAX,
-						    max_node, wd_aead_poll_ctx);
-		else
-			g_sched = wd_sched_rr_alloc(SCHED_POLICY_DEV, SEC_OP_TYPE_MAX,
-						    max_node, wd_aead_poll_ctx);
-		break;
-	case DIGEST_TYPE:
-		if (options->mem_type == UADK_AUTO)
-			g_sched = wd_sched_rr_alloc(SCHED_POLICY_RR, SEC_OP_TYPE_MAX,
-						    max_node, wd_digest_poll_ctx);
-		else
-			g_sched = wd_sched_rr_alloc(SCHED_POLICY_DEV, SEC_OP_TYPE_MAX,
-						    max_node, wd_digest_poll_ctx);
-		break;
 	default:
 		SEC_TST_PRT("failed to parse alg subtype!\n");
 		goto free_ctx;
@@ -779,12 +622,6 @@ static int init_ctx_config(struct acc_option *options)
 	switch(subtype) {
 	case CIPHER_TYPE:
 		ret = wd_cipher_init(&g_ctx_cfg, g_sched);
-		break;
-	case AEAD_TYPE:
-		ret = wd_aead_init(&g_ctx_cfg, g_sched);
-		break;
-	case DIGEST_TYPE:
-		ret = wd_digest_init(&g_ctx_cfg, g_sched);
 		break;
 	}
 	if (ret) {
@@ -816,12 +653,6 @@ static void uninit_ctx_config(int subtype)
 	case CIPHER_TYPE:
 		wd_cipher_uninit();
 		break;
-	case AEAD_TYPE:
-		wd_aead_uninit();
-		break;
-	case DIGEST_TYPE:
-		wd_digest_uninit();
-		break;
 	default:
 		SEC_TST_PRT("failed to parse alg subtype on uninit!\n");
 		return;
@@ -840,13 +671,6 @@ static void uninit_ctx_config2(int subtype)
 	case CIPHER_TYPE:
 	case CIPHER_INSTR_TYPE:
 		wd_cipher_uninit2();
-		break;
-	case AEAD_TYPE:
-		wd_aead_uninit2();
-		break;
-	case DIGEST_TYPE:
-	case DIGEST_INSTR_TYPE:
-		wd_digest_uninit2();
 		break;
 	default:
 		SEC_TST_PRT("failed to parse alg subtype on uninit2!\n");
@@ -912,29 +736,6 @@ static int init_ctx_config2(struct acc_option *options)
 		if (ret)
 			SEC_TST_PRT("failed to do cipher intruction init2!\n");
 		break;
-	case AEAD_TYPE:
-		if (options->mem_type == UADK_AUTO)
-			ret = wd_aead_init2_(alg_name, SCHED_POLICY_RR, TASK_HW, &ctx_params);
-		else
-			ret = wd_aead_init2_(alg_name, SCHED_POLICY_DEV, TASK_HW, &ctx_params);
-		if (ret)
-			SEC_TST_PRT("failed to do aead init2!\n");
-		break;
-	case DIGEST_TYPE:
-		if (options->mem_type == UADK_AUTO) {
-			ctx_params.op_type_num = 1;
-			ret = wd_digest_init2_(alg_name, SCHED_POLICY_RR, options->task_type, &ctx_params);
-		} else
-			ret = wd_digest_init2_(alg_name, SCHED_POLICY_DEV, options->task_type, &ctx_params);
-		if (ret)
-			SEC_TST_PRT("failed to do digest init2!\n");
-		break;
-	case DIGEST_INSTR_TYPE:
-		ctx_params.op_type_num = 1;
-		ret = wd_digest_init2_(alg_name, SCHED_POLICY_INSTR, TASK_INSTR, &ctx_params);
-		if (ret)
-			SEC_TST_PRT("failed to do digest instruction init2!\n");
-		break;
 	}
 	if (ret) {
 		SEC_TST_PRT("failed to do cipher init2!\n");
@@ -942,95 +743,6 @@ static int init_ctx_config2(struct acc_option *options)
 	}
 
 	return ret;
-}
-
-static void get_aead_data(u8 *addr, u32 size)
-{
-	memset(addr, 0, size);
-	memcpy(addr, aead_aad, SEC_AEAD_LEN);
-}
-
-static void save_aead_dst_data(u8 *addr, u32 size)
-{
-	char file_name[SEC_SAVE_FILE_LEN] = {0};
-	char *alg_name;
-	FILE *fp;
-
-	alg_name = get_aead_alg_name(g_algtype);
-	if (!alg_name) {
-		SEC_TST_PRT("failed to get the aead alg name!\n");
-		return;
-	}
-
-	snprintf(file_name, SEC_SAVE_FILE_LEN, "ctext_%s_%u", alg_name, g_pktlen);
-
-	fp = fopen(file_name, "w");
-	if (!fp) {
-		SEC_TST_PRT("failed to open the ctext file!\n");
-		return;
-	}
-
-	memcpy(addr + size, g_uadk_pool.pool[0].bds[0].mac, SEC_PERF_AUTH_SIZE);
-
-	for (int i = 0; i < size + SEC_PERF_AUTH_SIZE; i++)
-		fputc((char)addr[i], fp);
-
-	fclose(fp);
-}
-
-static void read_aead_dst_data(u8 *addr, u32 len)
-{
-	char file_name[SEC_SAVE_FILE_LEN] = {0};
-	struct wd_datalist *current;
-	size_t bytes_to_read = 0;
-	size_t bytes_read = 0;
-	char *alg_name;
-	FILE *fp;
-	int size;
-
-	alg_name = get_aead_alg_name(g_algtype);
-	if (!alg_name) {
-		SEC_TST_PRT("failed to get the aead alg name!\n");
-		return;
-	}
-
-	snprintf(file_name, SEC_SAVE_FILE_LEN, "ctext_%s_%u", alg_name, g_pktlen);
-
-	fp = fopen(file_name, "r");
-	if (!fp) {
-		SEC_TST_PRT("failed to open the ctext file!\n");
-		return;
-	}
-
-	fseek(fp, 0, SEEK_END);
-	size = ftell(fp);
-
-	rewind(fp);
-
-	if (!g_data_fmt) {
-		size = fread(addr, 1, size, fp);
-		addr[size] = '\0';
-
-		memcpy(g_save_mac, (char *)addr + len, SEC_MAX_MAC_LEN);
-	} else {
-		current = (struct wd_datalist *)addr;
-		while (current && size > 0) {
-			bytes_to_read = current->len;
-			if (bytes_to_read > size)
-				bytes_to_read = size;
-			bytes_read = fread(current->data, 1, bytes_to_read, fp);
-
-			if (bytes_read != bytes_to_read) {
-				SEC_TST_PRT("partial read: expected %zu, got %zu\n", bytes_to_read, bytes_read);
-				fclose(fp);
-				return;
-			}
-			size -= bytes_read;
-			current = current->next;
-		}
-	}
-
-	fclose(fp);
 }
 
 static int init_ivkey_source(void)
@@ -1129,12 +841,8 @@ static void *create_buf(int sgl, size_t sz, size_t unit_sz)
 	if (sgl == WD_FLAT_BUF)
 		return buf;
 
-	if (g_alg != AEAD_TYPE) {
+	if (g_alg != AEAD_TYPE)
 		get_rand_data(buf, g_pktlen);
-	} else {
-		if (!g_optype)
-			get_aead_data(buf, g_pktlen + SEC_AEAD_LEN);
-	}
 
 	tail_sz = sz % unit_sz;
 	sgl_num = sz / unit_sz;	/* the number with unit_sz bytes */
@@ -1250,22 +958,9 @@ static int init_uadk_bd_pool(void)
 						if (g_prefetch)
 							get_rand_data(g_uadk_pool.pool[i].bds[j].dst,
 									g_pktlen);
-					} else {
-						if (!g_optype)
-							get_aead_data(g_uadk_pool.pool[i].bds[j].src,
-									g_pktlen + SEC_AEAD_LEN);
-						else {
-							read_aead_dst_data(g_uadk_pool.pool[i].bds[j].src,
-									g_pktlen + SEC_AEAD_LEN);
-							memcpy(g_uadk_pool.pool[i].bds[j].mac, g_save_mac, SEC_MAX_MAC_LEN);
-						}
 					}
 				} else if (g_data_fmt == WD_SGL_BUF) {
-					if (g_optype && g_alg == AEAD_TYPE) {
-						read_aead_dst_data(g_uadk_pool.pool[i].bds[j].src,
-									g_pktlen + SEC_AEAD_LEN);
-						memcpy(g_uadk_pool.pool[i].bds[j].mac, g_save_mac, SEC_MAX_MAC_LEN);
-					} else if (g_prefetch && g_alg == DIGEST_TYPE) {
+					if (g_prefetch && g_alg == DIGEST_TYPE) {
 						get_rand_data(g_uadk_pool.pool[i].bds[j].dst, g_pktlen);
 					}
 				}
@@ -1311,11 +1006,6 @@ free_ivkey:
 static void free_uadk_bd_pool(void)
 {
 	int i, j;
-
-	/* save aad + ctext + mac */
-	if (g_alg == AEAD_TYPE && !g_optype)
-		save_aead_dst_data(g_uadk_pool.pool[0].bds[0].dst,
-				   g_pktlen + SEC_AEAD_LEN);
 
 	for (i = 0; i < g_thread_num; i++) {
 		if (g_uadk_pool.pool[i].bds) {
@@ -1557,13 +1247,6 @@ static int init_uadk_rsv_pool(struct acc_option *option)
 				get_rand_data(g_uadk_pool.pool[i].bds[j].src, g_pktlen);
 				if (g_prefetch)
 					get_rand_data(g_uadk_pool.pool[i].bds[j].dst, g_pktlen);
-			} else {
-				if (!g_optype)
-					get_aead_data(g_uadk_pool.pool[i].bds[j].src, g_pktlen + SEC_AEAD_LEN);
-				else {
-					read_aead_dst_data(g_uadk_pool.pool[i].bds[j].src, g_pktlen + SEC_AEAD_LEN);
-					memcpy(g_uadk_pool.pool[i].bds[j].mac, g_save_mac, SEC_MAX_MAC_LEN);
-				}
 			}
 		}
 	}
@@ -1622,11 +1305,6 @@ static void free_uadk_rsv_pool(struct acc_option *option)
 	handle_t h_ctx = (handle_t)g_ctx_cfg.priv;
 	int i, j;
 
-	/* save aad + ctext + mac */
-	if (g_alg == AEAD_TYPE && !g_optype)
-		save_aead_dst_data(g_uadk_pool.pool[0].bds[0].dst,
-				   g_pktlen + SEC_AEAD_LEN);
-
 	for (i = 0; i < g_thread_num; i++) {
 		if (g_uadk_pool.pool[i].bds) {
 			for (j = 0; j < MAX_POOL_LENTH; j++) {
@@ -1674,12 +1352,6 @@ static void *sec_uadk_poll(void *data)
 	case CIPHER_TYPE:
 		uadk_poll_ctx = wd_cipher_poll_ctx;
 		break;
-	case AEAD_TYPE:
-		uadk_poll_ctx = wd_aead_poll_ctx;
-		break;
-	case DIGEST_TYPE:
-		uadk_poll_ctx = wd_digest_poll_ctx;
-		break;
 	default:
 		SEC_TST_PRT("<<<<<<async poll interface is NULL!\n");
 		return NULL;
@@ -1719,17 +1391,8 @@ static void *sec_uadk_poll2(void *data)
 	case CIPHER_TYPE:
 		uadk_poll_policy = wd_cipher_poll;
 		break;
-	case AEAD_TYPE:
-		uadk_poll_policy = wd_aead_poll;
-		break;
-	case DIGEST_TYPE:
-		uadk_poll_policy = wd_digest_poll;
-		break;
 	case CIPHER_INSTR_TYPE:
 		uadk_poll_policy = wd_cipher_poll;
-		break;
-	case DIGEST_INSTR_TYPE:
-		uadk_poll_policy = wd_digest_poll;
 		break;
 	default:
 		SEC_TST_PRT("<<<<<<async poll interface is NULL!\n");
@@ -1858,247 +1521,6 @@ static void *sec_uadk_cipher_async(void *arg)
 	return NULL;
 }
 
-static void *sec_uadk_aead_async(void *arg)
-{
-	thread_data *pdata = (thread_data *)arg;
-	struct wd_aead_sess_setup aead_setup = {0};
-	struct sched_params sc_param = {0};
-	u8 *priv_iv, *priv_key, *priv_hash;
-	u32 auth_size = SEC_PERF_AUTH_SIZE;
-	struct wd_aead_req areq = {0};
-	struct bd_pool *uadk_pool;
-	int try_cnt = 0;
-	handle_t h_sess;
-	u32 count = 0;
-	int ret, i;
-
-	if (pdata->td_id > g_thread_num)
-		return NULL;
-
-	uadk_pool = &g_uadk_pool.pool[pdata->td_id];
-	priv_iv = g_uadk_pool.iv[pdata->td_id];
-	priv_key = g_uadk_pool.key[pdata->td_id];
-	priv_hash = g_uadk_pool.hash[pdata->td_id];
-
-	memset(priv_iv, DEF_IVK_DATA, MAX_IVK_LENTH);
-	memset(priv_key, DEF_IVK_DATA, MAX_IVK_LENTH);
-
-	aead_setup.calg = pdata->alg;
-	aead_setup.cmode = pdata->mode;
-	aead_setup.mm_type = pdata->mm_type;
-	sc_param.numa_id = 0;
-	sc_param.type = 0;
-	sc_param.mode = 0; // sync mode
-	if (g_uadk_pool.rsv_pool)
-		sc_param.dev_id = wd_get_dev_id(g_uadk_pool.rsv_pool);
-	aead_setup.sched_param = (void *)&sc_param;
-
-	aead_setup.mm_ops.usr = g_uadk_pool.rsv_pool;
-	aead_setup.mm_ops.alloc = (void *)wd_mem_alloc;
-	aead_setup.mm_ops.free = (void *)wd_mem_free;
-	aead_setup.mm_ops.iova_map = (void *)wd_mem_map;
-	aead_setup.mm_ops.iova_unmap = (void *)wd_mem_unmap;
-	aead_setup.mm_ops.get_bufsize = (void *)wd_get_bufsize;
-
-	if (pdata->is_union) {
-		aead_setup.dalg = pdata->dalg;
-		aead_setup.dmode = pdata->dmode;
-	}
-	h_sess = wd_aead_alloc_sess(&aead_setup);
-	if (!h_sess)
-		return NULL;
-	ret = wd_aead_set_ckey(h_sess, (const __u8*)priv_key, pdata->keysize);
-	if (ret) {
-		SEC_TST_PRT("test sec cipher set key is failed!\n");
-		wd_aead_free_sess(h_sess);
-		return NULL;
-	}
-	if (pdata->is_union) {
-		ret = wd_aead_set_akey(h_sess, (const __u8*)priv_hash, HASH_ZISE);
-		if (ret) {
-			SEC_TST_PRT("test sec aead set akey is failed!\n");
-			wd_aead_free_sess(h_sess);
-			return NULL;
-		}
-	}
-	ret = wd_aead_set_authsize(h_sess, auth_size);
-	if (ret) {
-		SEC_TST_PRT("set auth size fail, authsize: 16\n");
-		wd_aead_free_sess(h_sess);
-		return NULL;
-	}
-
-	areq.op_type = pdata->optype;
-	areq.iv = priv_iv; // aead IV need update with param
-	areq.mac = uadk_pool->bds[0].mac;
-	areq.iv_bytes = pdata->ivsize;
-	areq.mac_bytes = auth_size;
-	areq.assoc_bytes = SEC_AEAD_LEN;
-	areq.in_bytes = g_pktlen;
-	areq.msg_state = 0;
-	if (pdata->is_union)
-		areq.mac_bytes = 32;
-	if (areq.op_type) // decrypto
-		areq.out_bytes = g_pktlen + 16; // aadsize = 16;
-	else
-		areq.out_bytes = g_pktlen + 32; // aadsize + authsize = 32;
-
-	areq.data_fmt = g_data_fmt;
-	areq.state = 0;
-	areq.cb = aead_async_cb;
-
-	while(1) {
-		if (get_run_state() == 0)
-			break;
-		try_cnt = 0;
-		i = count % MAX_POOL_LENTH;
-
-		if (i == 0 && count > 0) {
-			count++;
-			continue;
-		}
-
-		areq.src = uadk_pool->bds[i].src;
-		areq.dst = uadk_pool->bds[i].dst;
-		areq.mac = uadk_pool->bds[i].mac;
-
-		ret = wd_do_aead_async(h_sess, &areq);
-		if (ret < 0) {
-			usleep(SEND_USLEEP * try_cnt);
-			try_cnt++;
-			if (try_cnt > MAX_TRY_CNT) {
-				SEC_TST_PRT("Test aead send fail %d times!\n", MAX_TRY_CNT);
-				try_cnt = 0;
-			}
-			continue;
-		}
-		count++;
-	}
-
-	/* Release memory after all tasks are complete. */
-	if (count) {
-		i = 0;
-		while (get_recv_time() != g_ctxnum) {
-			if (i++ >= MAX_TRY_CNT) {
-				SEC_TST_PRT("failed to wait poll thread finish!\n");
-				break;
-			}
-
-			usleep(SEND_USLEEP);
-		}
-	}
-	/* Wait for the device to complete the tasks. */
-	usleep(SEND_USLEEP * MAX_TRY_CNT);
-
-	wd_aead_free_sess(h_sess);
-
-	add_send_complete();
-
-	return NULL;
-}
-
-static void *sec_uadk_digest_async(void *arg)
-{
-	thread_data *pdata = (thread_data *)arg;
-	struct wd_digest_sess_setup digest_setup = {0};
-	struct sched_params sc_param = {0};
-	struct wd_digest_req dreq;
-	struct bd_pool *uadk_pool;
-	u8 *priv_iv, *priv_key;
-	int try_cnt = 0;
-	handle_t h_sess;
-	u32 count = 0;
-	int ret, i;
-
-	if (pdata->td_id > g_thread_num)
-		return NULL;
-
-	uadk_pool = &g_uadk_pool.pool[pdata->td_id];
-	priv_iv = g_uadk_pool.iv[pdata->td_id];
-	priv_key = g_uadk_pool.key[pdata->td_id];
-
-	memset(priv_iv, DEF_IVK_DATA, MAX_IVK_LENTH);
-	memset(priv_key, DEF_IVK_DATA, MAX_IVK_LENTH);
-
-	digest_setup.alg = pdata->alg;
-	digest_setup.mode = pdata->mode; // digest mode is optype
-	digest_setup.mm_type = pdata->mm_type;
-	sc_param.numa_id = 0;
-	sc_param.type = 0;
-	sc_param.mode = 0; // sync mode
-	if (g_uadk_pool.rsv_pool)
-		sc_param.dev_id = wd_get_dev_id(g_uadk_pool.rsv_pool);
-	digest_setup.sched_param = (void *)&sc_param;
-
-	digest_setup.mm_ops.usr = g_uadk_pool.rsv_pool;
-	digest_setup.mm_ops.alloc = (void *)wd_mem_alloc;
-	digest_setup.mm_ops.free = (void *)wd_mem_free;
-	digest_setup.mm_ops.iova_map = (void *)wd_mem_map;
-	digest_setup.mm_ops.iova_unmap = (void *)wd_mem_unmap;
-	digest_setup.mm_ops.get_bufsize = (void *)wd_get_bufsize;
-
-	h_sess = wd_digest_alloc_sess(&digest_setup);
-	if (!h_sess)
-		return NULL;
-	if (digest_setup.mode == WD_DIGEST_HMAC) {
-		ret = wd_digest_set_key(h_sess, (const __u8*)priv_key, 4);
-		if (ret) {
-			SEC_TST_PRT("test sec digest set key is failed!\n");
-			wd_digest_free_sess(h_sess);
-			return NULL;
-		}
-	}
-	dreq.in_bytes = g_pktlen;
-	dreq.out_bytes = pdata->d_outbytes;
-	dreq.out_buf_bytes = pdata->d_outbytes;
-	dreq.data_fmt = g_data_fmt;
-	dreq.state = 0;
-	dreq.has_next = 0;
-	dreq.cb = digest_async_cb;
-
-	while(1) {
-		if (get_run_state() == 0)
-			break;
-		try_cnt = 0;
-		i = count % MAX_POOL_LENTH;
-		dreq.in = uadk_pool->bds[i].src;
-		dreq.out = uadk_pool->bds[i].dst;
-
-		ret = wd_do_digest_async(h_sess, &dreq);
-		if (ret < 0) {
-			usleep(SEND_USLEEP * try_cnt);
-			try_cnt++;
-			if (try_cnt > MAX_TRY_CNT) {
-				SEC_TST_PRT("Test digest send fail %d times!\n", MAX_TRY_CNT);
-				try_cnt = 0;
-			}
-			continue;
-		}
-		count++;
-	}
-
-	/* Release memory after all tasks are complete. */
-	if (count) {
-		i = 0;
-		while (get_recv_time() != g_ctxnum) {
-			if (i++ >= MAX_TRY_CNT) {
-				SEC_TST_PRT("failed to wait poll thread finish!\n");
-				break;
-			}
-
-			usleep(SEND_USLEEP);
-		}
-	}
-	/* Wait for the device to complete the tasks. */
-	usleep(SEND_USLEEP * MAX_TRY_CNT);
-
-	wd_digest_free_sess(h_sess);
-
-	add_send_complete();
-
-	return NULL;
-}
-
 static void *sec_uadk_cipher_sync(void *arg)
 {
 	thread_data *pdata = (thread_data *)arg;
@@ -2175,186 +1597,6 @@ static void *sec_uadk_cipher_sync(void *arg)
 	return NULL;
 }
 
-static void *sec_uadk_aead_sync(void *arg)
-{
-	thread_data *pdata = (thread_data *)arg;
-	struct wd_aead_sess_setup aead_setup = {0};
-	struct sched_params sc_param = {0};
-	u8 *priv_iv, *priv_key, *priv_hash;
-	u32 auth_size = SEC_PERF_AUTH_SIZE;
-	struct wd_aead_req areq = {0};
-	struct bd_pool *uadk_pool;
-	handle_t h_sess;
-	u32 count = 0;
-	int ret, i;
-
-	if (pdata->td_id > g_thread_num)
-		return NULL;
-
-	uadk_pool = &g_uadk_pool.pool[pdata->td_id];
-
-	priv_iv = g_uadk_pool.iv[pdata->td_id];
-	priv_key = g_uadk_pool.key[pdata->td_id];
-	priv_hash = g_uadk_pool.hash[pdata->td_id];
-
-	memset(priv_iv, DEF_IVK_DATA, MAX_IVK_LENTH);
-	memset(priv_key, DEF_IVK_DATA, MAX_IVK_LENTH);
-
-	aead_setup.calg = pdata->alg;
-	aead_setup.cmode = pdata->mode;
-	aead_setup.mm_type = pdata->mm_type;
-	sc_param.numa_id = 0;
-	sc_param.type = 0;
-	sc_param.mode = 0; // sync mode
-	if (g_uadk_pool.rsv_pool)
-		sc_param.dev_id = wd_get_dev_id(g_uadk_pool.rsv_pool);
-	aead_setup.sched_param = (void *)&sc_param;
-
-	aead_setup.mm_ops.usr = g_uadk_pool.rsv_pool;
-	aead_setup.mm_ops.alloc = (void *)wd_mem_alloc;
-	aead_setup.mm_ops.free = (void *)wd_mem_free;
-	aead_setup.mm_ops.iova_map = (void *)wd_mem_map;
-	aead_setup.mm_ops.iova_unmap = (void *)wd_mem_unmap;
-	aead_setup.mm_ops.get_bufsize = (void *)wd_get_bufsize;
-	if (pdata->is_union) {
-		aead_setup.dalg = pdata->dalg;
-		aead_setup.dmode = pdata->dmode;
-	}
-	h_sess = wd_aead_alloc_sess(&aead_setup);
-	if (!h_sess)
-		return NULL;
-	ret = wd_aead_set_ckey(h_sess, (const __u8*)priv_key, pdata->keysize);
-	if (ret) {
-		SEC_TST_PRT("test sec cipher set key is failed!\n");
-		wd_aead_free_sess(h_sess);
-		return NULL;
-	}
-	if (pdata->is_union) {
-		ret = wd_aead_set_akey(h_sess, (const __u8*)priv_hash, HASH_ZISE);
-		if (ret) {
-			SEC_TST_PRT("test sec aead set akey is failed!\n");
-			wd_aead_free_sess(h_sess);
-			return NULL;
-		}
-	}
-	ret = wd_aead_set_authsize(h_sess, auth_size);
-	if (ret) {
-		SEC_TST_PRT("set auth size fail, authsize: 16\n");
-		wd_aead_free_sess(h_sess);
-		return NULL;
-	}
-
-	areq.op_type = pdata->optype;
-	areq.iv = priv_iv; // aead IV need update with param
-	areq.mac = uadk_pool->bds[0].mac;
-	areq.iv_bytes = pdata->ivsize;
-	areq.assoc_bytes = SEC_AEAD_LEN;
-	areq.in_bytes = g_pktlen;
-	areq.mac_bytes = g_maclen;
-	areq.msg_state = 0;
-	if (areq.op_type) // decrypto
-		areq.out_bytes = g_pktlen + 16; // aadsize = 16;
-	else
-		areq.out_bytes = g_pktlen + 32; // aadsize + authsize = 32;
-
-	areq.data_fmt = g_data_fmt;
-	areq.state = 0;
-
-	while(1) {
-		i = count % MAX_POOL_LENTH;
-		areq.src = uadk_pool->bds[i].src;
-		areq.dst = uadk_pool->bds[i].dst;
-		count++;
-
-		ret = wd_do_aead_sync(h_sess, &areq);
-		if (ret || areq.state)
-			break;
-		if (get_run_state() == 0)
-			break;
-	}
-	wd_aead_free_sess(h_sess);
-
-	cal_avg_latency(count);
-	add_recv_data(count, g_pktlen);
-
-	return NULL;
-}
-
-static void *sec_uadk_digest_sync(void *arg)
-{
-	thread_data *pdata = (thread_data *)arg;
-	struct wd_digest_sess_setup digest_setup = {0};
-	struct sched_params sc_param = {0};
-	struct wd_digest_req dreq;
-	struct bd_pool *uadk_pool;
-	u8 *priv_iv, *priv_key;
-	handle_t h_sess;
-	u32 count = 0;
-	int ret, i;
-
-	if (pdata->td_id > g_thread_num)
-		return NULL;
-
-	uadk_pool = &g_uadk_pool.pool[pdata->td_id];
-	priv_iv = g_uadk_pool.iv[pdata->td_id];
-	priv_key = g_uadk_pool.key[pdata->td_id];
-
-	memset(priv_iv, DEF_IVK_DATA, MAX_IVK_LENTH);
-	memset(priv_key, DEF_IVK_DATA, MAX_IVK_LENTH);
-
-	digest_setup.alg = pdata->alg;
-	digest_setup.mode = pdata->mode; // digest mode is optype
-	digest_setup.mm_type = pdata->mm_type;
-	sc_param.numa_id = 0;
-	sc_param.type = 0;
-	sc_param.mode = 0; // sync mode
-	if (g_uadk_pool.rsv_pool)
-		sc_param.dev_id = wd_get_dev_id(g_uadk_pool.rsv_pool);
-	digest_setup.sched_param = (void *)&sc_param;
-
-	digest_setup.mm_ops.usr = g_uadk_pool.rsv_pool;
-	digest_setup.mm_ops.alloc = (void *)wd_mem_alloc;
-	digest_setup.mm_ops.free = (void *)wd_mem_free;
-	digest_setup.mm_ops.iova_map = (void *)wd_mem_map;
-	digest_setup.mm_ops.iova_unmap = (void *)wd_mem_unmap;
-	digest_setup.mm_ops.get_bufsize = (void *)wd_get_bufsize;
-	h_sess = wd_digest_alloc_sess(&digest_setup);
-	if (!h_sess)
-		return NULL;
-	if (digest_setup.mode == WD_DIGEST_HMAC) {
-		ret = wd_digest_set_key(h_sess, (const __u8*)priv_key, 4);
-		if (ret) {
-			SEC_TST_PRT("test sec digest set key is failed!\n");
-			wd_digest_free_sess(h_sess);
-			return NULL;
-		}
-	}
-	dreq.in_bytes = g_pktlen;
-	dreq.out_bytes = pdata->d_outbytes;
-	dreq.out_buf_bytes = pdata->d_outbytes;
-	dreq.data_fmt = g_data_fmt;
-	dreq.state = 0;
-	dreq.has_next = 0;
-
-	while(1) {
-		i = count % MAX_POOL_LENTH;
-		dreq.in = uadk_pool->bds[i].src;
-		dreq.out = uadk_pool->bds[i].dst;
-		ret = wd_do_digest_sync(h_sess, &dreq);
-		if (ret || dreq.state)
-			break;
-		count++;
-		if (get_run_state() == 0)
-			break;
-	}
-	wd_digest_free_sess(h_sess);
-
-	cal_avg_latency(count);
-	add_recv_data(count, g_pktlen);
-
-	return NULL;
-}
-
 int sec_uadk_sync_threads(struct acc_option *options)
 {
 	typedef void *(*sec_sync_run)(void *arg);
@@ -2373,13 +1615,6 @@ int sec_uadk_sync_threads(struct acc_option *options)
 	case CIPHER_TYPE:
 	case CIPHER_INSTR_TYPE:
 		uadk_sec_sync_run = sec_uadk_cipher_sync;
-		break;
-	case AEAD_TYPE:
-		uadk_sec_sync_run = sec_uadk_aead_sync;
-		break;
-	case DIGEST_TYPE:
-	case DIGEST_INSTR_TYPE:
-		uadk_sec_sync_run = sec_uadk_digest_sync;
 		break;
 	default:
 		SEC_TST_PRT("Invalid subtype!\n");
@@ -2437,13 +1672,6 @@ int sec_uadk_async_threads(struct acc_option *options)
 	case CIPHER_TYPE:
 	case CIPHER_INSTR_TYPE:
 		uadk_sec_async_run = sec_uadk_cipher_async;
-		break;
-	case AEAD_TYPE:
-		uadk_sec_async_run = sec_uadk_aead_async;
-		break;
-	case DIGEST_TYPE:
-	case DIGEST_INSTR_TYPE:
-		uadk_sec_async_run = sec_uadk_digest_async;
 		break;
 	}
 
@@ -2515,14 +1743,6 @@ int sec_uadk_benchmark(struct acc_option *options)
 	g_optype = options->optype;
 	g_algtype = options->algtype;
 	g_data_fmt = options->data_fmt;
-
-	if (g_alg == AEAD_TYPE) {
-		g_maclen = get_aead_mac_len(g_algtype);
-		if (g_maclen < 0) {
-			SEC_TST_PRT("SEC algtype error: %u\n", g_algtype);
-			return -EINVAL;
-		}
-	}
 
 	if (options->optype > WD_CIPHER_DECRYPTION) {
 		SEC_TST_PRT("SEC optype error: %u\n", options->optype);
