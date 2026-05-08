@@ -38,7 +38,7 @@ pkginclude_HEADERS = include/wd.h include/wd_internal.h include/wd_cipher.h incl
 		  include/wd_ecc.h include/wd_sched.h include/wd_alg.h \
 		  include/wd_zlibwrapper.h include/wd_dae.h include/wd_agg.h \
 		  include/wd_udma.h include/wd_join_gather.h \
-		  include/wd_bmm.h
+		  include/wd_bmm.h include/wd_drv.h
 
 nobase_pkginclude_HEADERS = v1/wd.h v1/wd_cipher.h v1/wd_aead.h v1/uacce.h v1/wd_dh.h \
 			 v1/wd_digest.h v1/wd_rsa.h v1/wd_bmm.h
@@ -49,7 +49,7 @@ uadk_driversdir=$(libdir)/uadk
 uadk_drivers_LTLIBRARIES=libhisi_sec.la libhisi_hpre.la libhisi_zip.la \
 			 libisa_ce.la libisa_sve.la libhisi_dae.la libhisi_udma.la
 
-libwd_la_SOURCES=wd.c wd_mempool.c wd_bmm.c wd_bmm.h wd.h wd_alg.c wd_alg.h	\
+libwd_la_SOURCES=wd.c wd_mempool.c wd_bmm.c wd_bmm.h wd.h wd_alg.c wd_alg.h wd_drv.c	\
 		 v1/wd.c v1/wd.h v1/wd_adapter.c v1/wd_adapter.h \
 		 v1/wd_rsa.c v1/wd_rsa.h	\
 		 v1/wd_aead.c v1/wd_aead.h	\
@@ -101,7 +101,7 @@ libhisi_hpre_la_SOURCES=drv/hisi_hpre.c drv/hisi_qm_udrv.c \
 
 if ARCH_ARM64
 libisa_ce_la_SOURCES=arm_arch_ce.h drv/isa_ce_sm3.c drv/isa_ce_sm3_armv8.S isa_ce_sm3.h \
-		drv/isa_ce_sm4.c drv/isa_ce_sm4_armv8.S drv/isa_ce_sm4.h
+		drv/isa_ce_sm4.c drv/isa_ce_sm4_armv8.S drv/isa_ce_sm4.h wd_util.c wd_util.h
 
 libisa_sve_la_SOURCES=drv/hash_mb/hash_mb.c wd_digest_drv.h drv/hash_mb/hash_mb.h \
 		drv/hash_mb/sm3_sve_common.S drv/hash_mb/sm3_mb_asimd_x1.S \

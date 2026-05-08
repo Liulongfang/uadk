@@ -42,6 +42,13 @@ extern "C" {
 /* Key size of digest */
 #define MAX_HMAC_KEY_SIZE	128U
 
+/*
+ * The maximum number of queue types
+ * required for similar algorithms
+ */
+#define MAX_CTX_OP_TYPE 4U
+#define STATUS_ENABLE	(void *)0x1
+
 enum alg_task_type {
 	TASK_MIX = 0x0,
 	TASK_HW,
@@ -53,6 +60,11 @@ enum wd_ctx_mode {
 	CTX_MODE_SYNC = 0,
 	CTX_MODE_ASYNC,
 	CTX_MODE_MAX,
+};
+
+enum wd_buff_type {
+	WD_FLAT_BUF,
+	WD_SGL_BUF,
 };
 
 enum wd_init_type {
@@ -69,7 +81,8 @@ enum wd_mem_type {
 
 /*
  * struct wd_ctx - Define one ctx and related type.
- * @ctx:	The ctx itself.
+ * @ctx:	The ctx itself, the hardware queue is wd_ctx_h.
+ *		The soft computing queue is wd_soft_ctx.
  * @op_type:	Define the operation type of this specific ctx.
  *		e.g. 0: compression; 1: decompression.
  * @ctx_mode:   Define this ctx is used for synchronization of asynchronization
@@ -81,7 +94,7 @@ struct wd_ctx {
 	__u8 ctx_mode;
 };
 
-/*
+/**
  * struct wd_cap_config - Capabilities.
  * @ctx_msg_num: number of asynchronous msg pools that the user wants to allocate.
  *		 Optional, user can set ctx_msg_num based on the number of requests
@@ -94,7 +107,7 @@ struct wd_cap_config {
 	__u32 resv;
 };
 
-/*
+/**
  * struct wd_ctx_config - Define a ctx set and its related attributes, which
  *			  will be used in the scope of current process.
  * @ctx_num:	The ctx number in below ctx array.
@@ -110,7 +123,7 @@ struct wd_ctx_config {
 	struct wd_cap_config *cap;
 };
 
-/*
+/**
  * struct wd_ctx_nums - Define the ctx sets numbers.
  * @sync_ctx_num: The ctx numbers which are used for sync mode for each
  * ctx sets.
@@ -122,7 +135,7 @@ struct wd_ctx_nums {
 	__u32 async_ctx_num;
 };
 
-/*
+/**
  * struct wd_ctx_params - Define the ctx sets params which are used for init
  * algorithms.
  * @op_type_num: Used for index of ctx_set_num, the order is the same as
@@ -140,7 +153,7 @@ struct wd_ctx_params {
 };
 
 /*
- * struct wd_comp_sched - Define a scheduler.
+ * struct wd_sched - Define a scheduler.
  * @name:		Name of this scheduler.
  * @sched_policy:	Method for scheduler to perform scheduling
  * @sched_init: 	inited the scheduler input parameters.
@@ -164,8 +177,29 @@ struct wd_sched {
 	handle_t h_sched_ctx;
 };
 
-typedef int (*wd_alg_init)(struct wd_ctx_config *config, struct wd_sched *sched);
+typedef int (*wd_alg_init)(struct wd_ctx_config *config, struct wd_sched *sched, void *attrs);
 typedef int (*wd_alg_poll_ctx)(__u32 idx, __u32 expt, __u32 *count);
+
+/**
+ * struct wd_init_attrs - Algorithm initialization attributes.
+ *
+ * Updated: No longer contains driver field.
+ * Initialization path determined solely by task_type.
+ */
+struct wd_init_attrs {
+	__u32 sched_type;
+	__u32 task_type;
+	char alg[CRYPTO_MAX_ALG_NAME];
+	struct wd_sched *sched;
+	struct wd_ctx_params *ctx_params;
+	struct wd_ctx_config *ctx_config;
+	wd_alg_init alg_init;
+	wd_alg_poll_ctx alg_poll_ctx;
+
+	struct wd_ctx_config_internal *ctx_config_internal;
+	struct wd_alg_driver **drv_array;
+	__u32 drv_count; 
+};
 
 #ifdef __cplusplus
 }

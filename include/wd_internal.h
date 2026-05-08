@@ -29,23 +29,17 @@ struct wd_ctx_h {
 	void *priv;
 };
 
-struct wd_soft_ctx {
-	int fd;
-	void *priv;
-};
-
-struct wd_ce_ctx {
-	int fd;
-	char *drv_name;
-	void *priv;
-};
-
 struct wd_ctx_internal {
-	handle_t ctx;
 	__u8 op_type;
 	__u8 ctx_mode;
+	__u8 ctx_type;
+	__u8 ctx_used;
+	handle_t ctx;	// if ctx is first will cause problem
 	__u16 sqn;
 	pthread_spinlock_t lock;
+	struct wd_alg_driver *drv;
+	void *drv_priv;
+	void *extend_ops;
 };
 
 struct wd_ctx_config_internal {
@@ -56,6 +50,9 @@ struct wd_ctx_config_internal {
 	bool epoll_en;
 	unsigned long *msg_cnt;
 	char *alg_name;
+
+	struct wd_alg_driver **drv_array;
+	__u32 drv_count;
 };
 
 struct wd_datalist {
