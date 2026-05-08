@@ -90,7 +90,7 @@ libwd_crypto_la_SOURCES=wd_cipher.c wd_cipher.h wd_cipher_drv.h \
 			wd_digest.c wd_digest.h wd_digest_drv.h \
 			wd_util.c wd_util.h \
 			wd_sched.c wd_sched.h \
-			wd.c wd.h
+			wd.c wd.h wd_alg.h
 
 libhisi_sec_la_SOURCES=drv/hisi_sec.c drv/hisi_qm_udrv.c \
 		lib/crypto/aes.c lib/crypto/sm4.c lib/crypto/galois.c \
