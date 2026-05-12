@@ -687,7 +687,7 @@ static int wd_sched_skey_add_ctx(struct wd_sched_domain_idx_cache *cache, __u32 
 	}
 
 	/* Update min load index if as the new ctx */
-	atomic_store(&cache->min_load_idx, ctx_id);
+	atomic_store(&cache->min_load_idx, cache->valid_count);
 
 	/* Add to next available position */
 	cache->idx_list[cache->valid_count] = ctx_id;
@@ -1540,7 +1540,7 @@ static __u32 skey_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 		return INVALID_POS;
 
 	/* Update load value for send one task */
-	wd_sched_skey_update_load(&skey->async_domain.idx_cache, ctx_idx, 1);
+	wd_sched_skey_update_load(&domain->idx_cache, ctx_idx, 1);
 	min_load = domain->idx_cache.load_values[ctx_idx];
 
 	/* Check if we need to expand context pool */

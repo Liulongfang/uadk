@@ -142,7 +142,7 @@ enum wd_ctx_property {
 struct wd_ctx_nums {
 	__u32 sync_ctx_num;
 	__u32 async_ctx_num;
-t__u8 ctx_prop;
+	__u8 ctx_prop;
 	__u16 ctx_begin;
 	struct wd_ctx_nums *other_ctx;
 };

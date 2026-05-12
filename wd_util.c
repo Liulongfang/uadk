@@ -2339,7 +2339,7 @@ static int wd_alg_sched_instance(struct wd_sched *sched,
 {
 	struct sched_params sparams;
 	__u32 sync_count, async_count, total_count;
-	__u32 i;
+	__u32 i, sync_offset, async_offset;
 	int ret;
 
 	if (!sched || !ctx_config || !ctx_params) {
@@ -2367,42 +2367,59 @@ static int wd_alg_sched_instance(struct wd_sched *sched,
 	WD_INFO("Registering contexts: sync=%u, async=%u, total=%u\n",
 	        sync_count, async_count, total_count);
 
-	/* Register sync contexts range to scheduler */
-	if (sync_count > 0) {
-		memset(&sparams, 0, sizeof(sparams));
-		sparams.numa_id = 0;
-		sparams.type = 0;
-		sparams.mode = CTX_MODE_SYNC;
-		sparams.begin = 0;
-		sparams.end = sync_count - 1;
-		sparams.ctx_prop = 0;
+	/* Register each ctx_set_num entry as a separate scheduling domain
+	 * with its own op_type, ctx_prop, and numa_id.
+	 * Memory layout: [sync ctxs for all entries]...[async ctxs for all entries]
+	 */
+	sync_offset = 0;
+	async_offset = sync_count;
 
-		ret = wd_sched_rr_instance(sched, &sparams);
-		if (ret) {
-			WD_ERR("failed to register sync contexts to scheduler!\n");
-			return ret;
+	for (i = 0; i < ctx_params->op_type_num; i++) {
+		__u32 s_num = ctx_params->ctx_set_num[i].sync_ctx_num;
+		__u32 a_num = ctx_params->ctx_set_num[i].async_ctx_num;
+
+		/* Register sync contexts range */
+		if (s_num > 0) {
+			memset(&sparams, 0, sizeof(sparams));
+			sparams.numa_id = 0;
+			sparams.type = i;
+			sparams.mode = CTX_MODE_SYNC;
+			sparams.begin = sync_offset;
+			sparams.end = sync_offset + s_num - 1;
+			sparams.ctx_prop = ctx_params->ctx_set_num[i].ctx_prop;
+			sparams.dev_id = 0;
+
+			ret = wd_sched_rr_instance(sched, &sparams);
+			if (ret) {
+				WD_ERR("failed to register sync contexts (entry %u) to scheduler!\n", i);
+				return ret;
+			}
+
+			sync_offset += s_num;
 		}
 
-		WD_INFO("Registered %u sync contexts to scheduler\n", sync_count);
-	}
+		/* Register async contexts range */
+		if (a_num > 0) {
+			memset(&sparams, 0, sizeof(sparams));
+			sparams.numa_id = 0;
+			sparams.type = i;
+			sparams.mode = CTX_MODE_ASYNC;
+			sparams.begin = async_offset;
+			sparams.end = async_offset + a_num - 1;
+			sparams.ctx_prop = ctx_params->ctx_set_num[i].ctx_prop;
+			sparams.dev_id = 0;
 
-	/* Register async contexts range to scheduler */
-	if (async_count > 0) {
-		memset(&sparams, 0, sizeof(sparams));
-		sparams.numa_id = 0;
-		sparams.type = 0;
-		sparams.mode = CTX_MODE_ASYNC;
-		sparams.begin = sync_count;
-		sparams.end = total_count - 1;
-		sparams.ctx_prop = 0;
+			ret = wd_sched_rr_instance(sched, &sparams);
+			if (ret) {
+				WD_ERR("failed to register async contexts (entry %u) to scheduler!\n", i);
+				return ret;
+			}
 
-		ret = wd_sched_rr_instance(sched, &sparams);
-		if (ret) {
-			WD_ERR("failed to register async contexts to scheduler!\n");
-			return ret;
+			async_offset += a_num;
 		}
 
-		WD_INFO("Registered %u async contexts to scheduler\n", async_count);
+		WD_INFO("Registered entry %u: sync=%u, async=%u, prop=%d\n",
+			i, s_num, a_num, ctx_params->ctx_set_num[i].ctx_prop);
 	}
 
 	return 0;
