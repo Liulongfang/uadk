@@ -1818,9 +1818,9 @@ int wd_ctx_param_init(struct wd_ctx_params *ctx_params,
 		return -WD_ENOMEM;
 	}
 
-	/* Only hw driver support environment variable */
+	/* Support env variable for HW and INSTR task types (excludes TASK_MAX_TYPE) */
 	var_s = secure_getenv(env_name);
-	if (var_s && strlen(var_s) && task_type <= TASK_HW) {
+	if (var_s && strlen(var_s) && task_type < TASK_MAX_TYPE) {
 		/* environment variable has the highest priority */
 		ret = wd_env_set_ctx_nums(alg, env_name, var_s,
 					  ctx_params, max_op_type);
@@ -1851,8 +1851,20 @@ int wd_ctx_param_init(struct wd_ctx_params *ctx_params,
 	for (i = 0; i < max_op_type; i++) {
 		ctx_params->ctx_set_num[i].sync_ctx_num = max_op_type;
 		ctx_params->ctx_set_num[i].async_ctx_num = max_op_type;
+		/* Set ctx_prop based on task_type so scheduler domains match
+		 * the calc_type of drivers discovered for this task_type.
+		 * Without this, all ctxs default to UADK_CTX_HW(0) which
+		 * breaks scheduling for TASK_INSTR scenarios where drivers
+		 * are CE_INSTR/SVE_INSTR/SOFT.
+		 */
+		if (task_type == TASK_INSTR)
+			ctx_params->ctx_set_num[i].ctx_prop = UADK_CTX_CE_INS;
+		else
+			ctx_params->ctx_set_num[i].ctx_prop = UADK_CTX_HW;
 	}
 	ctx_params->op_type_num = max_op_type;
+
+	return 0;
 
 	return 0;
 }
@@ -2649,7 +2661,8 @@ int wd_alg_ctx_init(struct wd_init_attrs *attrs)
 	 * be updated. See "Required changes in other files" below.
 	 */
 
-	WD_INFO("Phase 2 complete: %u ctxs from %u drivers\n",
+	WD_INFO("Phase 2 complete: %u ctxs from %u drivers
+",
 		total_ctx_num, attrs->drv_count);
 
 	return 0;
@@ -2701,6 +2714,52 @@ void wd_alg_attrs_uninit(struct wd_init_attrs *attrs)
 }
 
 /**
+ * wd_alg_attrs_sched_check() - Validate task_type + sched_type combination.
+ *
+ * After Phase 1 driver discovery, check that the requested scheduling
+ * policy is compatible with the discovered drivers and task type.
+ *
+ * Invalid combinations:
+ *   TASK_HW + SCHED_POLICY_INSTR   - instr poll only polls ctx[0],
+ *                                     losing HW async completions.
+ *   TASK_INSTR + SCHED_POLICY_DEV  - CE/SVE/SOFT drivers have no
+ *                                     dev_id for device-level domains.
+ *   SCHED_POLICY_NONE + >1 driver  - NONE always picks ctx[0];
+ *                                     different sessions may route to
+ *                                     a driver that doesn't support
+ *                                     their algorithm.
+ *
+ * @attrs: Initialization attributes (after Phase 1 drv_count populated)
+ * Return: 0 on success, -WD_EINVAL on invalid combination
+ */
+static int wd_alg_attrs_sched_check(const struct wd_init_attrs *attrs)
+{
+	if (attrs->task_type == TASK_HW &&
+	    attrs->sched_type == SCHED_POLICY_INSTR) {
+		WD_ERR("invalid: HW tasks must not use INSTR scheduler"
+		       " (misses async poll on non-first ctxs)\n");
+		return -WD_EINVAL;
+	}
+
+	if (attrs->task_type == TASK_INSTR &&
+	    attrs->sched_type == SCHED_POLICY_DEV) {
+		WD_ERR("invalid: INSTR tasks must not use DEV scheduler"
+		       " (instr drivers have no dev_id)\n");
+		return -WD_EINVAL;
+	}
+
+	if (attrs->sched_type == SCHED_POLICY_NONE &&
+	    attrs->drv_count > 1) {
+		WD_ERR("invalid: NONE scheduler requires single"
+		       " driver, but %u drivers discovered\n",
+		       attrs->drv_count);
+		return -WD_EINVAL;
+	}
+
+	return 0;
+}
+
+/**
  * wd_alg_attrs_init() - Algorithm attribute initialization (V2 path).
  *
  * Orchestrates the 3-phase initialization pipeline:
@@ -2731,16 +2790,20 @@ int wd_alg_attrs_init(struct wd_init_attrs *attrs)
 		WD_ERR("Phase 1: driver discovery failed!\n");
 		return ret;
 	}
-	WD_INFO("Phase 1: discovered %u unique drivers\n", attrs->drv_count);
+	WD_INFO("Phase 1: discovered %u unique drivers", attrs->drv_count);
+
+	ret = wd_alg_attrs_sched_check(attrs);
+	if (ret)
+		goto out_undiscover;
 
 	/* Phase 2: ctx allocation + internal copy + scheduler */
 	ret = wd_alg_ctx_init(attrs);
 	if (ret) {
-		WD_ERR("Phase 2: ctx init failed!\n");
+		WD_ERR("Phase 2: ctx init failed!");
 		goto out_undiscover;
 	}
 
-	WD_INFO("Algorithm initialization complete: %u contexts from %u drivers\n",
+	WD_INFO("Algorithm initialization complete: %u contexts from %u drivers",
 		attrs->ctx_config->ctx_num, attrs->drv_count);
 
 	return 0;
