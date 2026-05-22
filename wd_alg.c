@@ -307,6 +307,7 @@ int wd_alg_driver_register(struct wd_alg_driver *drv)
 
 		/* Add new algorithm to existing driver node */
 		strncpy(target_node->algs[target_node->alg_count].alg_name, drv->alg_name, ALG_NAME_SIZE - 1);
+		target_node->algs[target_node->alg_count].alg_name[ALG_NAME_SIZE - 1] = '\0';
 		target_node->algs[target_node->alg_count].available =
 			wd_alg_check_available(drv->calc_type, drv->alg_name, drv->drv_name);
 		if (!target_node->algs[target_node->alg_count].available) {
@@ -334,6 +335,7 @@ int wd_alg_driver_register(struct wd_alg_driver *drv)
 
 		/* Add the first algorithm to the new node's array */
 		strncpy(target_node->algs[0].alg_name, drv->alg_name, ALG_NAME_SIZE - 1);
+		target_node->algs[0].alg_name[ALG_NAME_SIZE - 1] = '\0';
 		target_node->algs[0].available =
 			wd_alg_check_available(drv->calc_type, drv->alg_name, drv->drv_name);
 		if (!target_node->algs[0].available) {
@@ -483,7 +485,6 @@ bool wd_drv_alg_support(const char *alg_name, void *param)
 					    node->algs[j].available)
 						return true;
 				}
-				break;
 			}
 			node = node->next;
 		}
