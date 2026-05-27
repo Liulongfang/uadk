@@ -182,6 +182,7 @@ struct wd_sched_key_domain {
 	struct wd_sched_domain_idx_cache idx_cache;
 	pthread_mutex_t lock;
 	__u32 expanded_count;
+	atomic_t pending_count;	/* Pending request count for poll optimization */
 };
 
 /**
@@ -1059,8 +1060,11 @@ static int wd_sched_poll_skey(struct wd_sched_ctx *sched_ctx, struct wd_sched_ke
 		if ((ret < 0) && (ret != -EAGAIN))
 			return ret;
 
-		if (poll_num > 0)
+		if (poll_num > 0) {
 			sum_poll_num += poll_num;
+			/* Decrement pending count for successfully polled requests */
+			atomic_fetch_sub(&skey->async_domain.pending_count, poll_num);
+		}
 
 		/* Update load value for this context */
 		if (skey->async_domain.idx_cache.policy == SCHED_POLICY_HUNGRY)
@@ -1358,6 +1362,8 @@ static __u32 round_robin_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 		domain = &skey->sync_domain;
 	} else {
 		domain = &skey->async_domain;
+		/* Increment pending count for async mode to indicate pending request */
+		atomic_fetch_add(&domain->pending_count, 1);
 	}
 
 	/* Get current minimum load context */
@@ -1394,17 +1400,25 @@ static int round_robin_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 		return -WD_EINVAL;
 	}
 
-	/* Randomize the initial query position. */
-	start_pos = tid % skey_num;
+	/* Optimize thread stagger using shift instead of modulo */
+	start_pos = (tid >> 3) % skey_num;
+
 	/* Query the queues on each skey separately. */
 	for (i = 0; i < skey_num; i++) {
 		tpos = (start_pos + i) % skey_num;
 		skey = sched_ctx->skey[tpos];
+
+		/* Skip session if no pending requests */
+		if (atomic_load(&skey->async_domain.pending_count) <= 0)
+			continue;
+
 		ret = wd_sched_poll_skey(sched_ctx, skey, expect, &poll_num);
 		if (unlikely(ret))
 			return ret;
 
 		sum_count += poll_num;
+		if (sum_count >= expect)
+			break;
 	}
 	*count = sum_count;
 
