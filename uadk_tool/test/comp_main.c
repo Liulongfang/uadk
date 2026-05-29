@@ -768,12 +768,12 @@ static void perfdata_print(struct test_options *opts, struct hizip_test_info *in
 	speed = ilen * 1000 * 1000 / 1024 / 1024 / usec;
 
 	if (opts->sync_mode) {
-		zbuf_idx += sprintf(zbuf + zbuf_idx,
+		zbuf_idx += snprintf(zbuf + zbuf_idx, sizeof(zbuf) - zbuf_idx,
 				    " with %d send + %d poll threads",
 				    opts->thread_num,
 				    opts->poll_num);
 	} else {
-		zbuf_idx += sprintf(zbuf + zbuf_idx,
+		zbuf_idx += snprintf(zbuf + zbuf_idx, sizeof(zbuf) - zbuf_idx,
 				    " with %d send threads",
 				    opts->thread_num);
 	}
@@ -824,17 +824,17 @@ static int test_hw(struct test_options *opts, char *model)
 	info.out_chunk_sz = opts->block_size;
 	if (!strcmp(model, "sw_dfl_hw_ifl")) {
 		func = sw_dfl_hw_ifl;
-		zbuf_idx = sprintf(zbuf, "Mix SW deflate and HW %s %s inflate",
+		zbuf_idx = snprintf(zbuf, sizeof(zbuf), "Mix SW deflate and HW %s %s inflate",
 				   opts->sync_mode ? "ASYNC" : "SYNC",
 				   opts->is_stream ? "STREAM" : "BLOCK");
 	} else if (!strcmp(model, "hw_dfl_sw_ifl")) {
 		func = hw_dfl_sw_ifl;
-		zbuf_idx = sprintf(zbuf, "Mix HW %s %s deflate and SW inflate",
+		zbuf_idx = snprintf(zbuf, sizeof(zbuf), "Mix HW %s %s deflate and SW inflate",
 				   opts->sync_mode ? "ASYNC" : "SYNC",
 				   opts->is_stream ? "STREAM" : "BLOCK");
 	} else if (!strcmp(model, "hw_dfl_hw_ifl")) {
 		func = hw_dfl_hw_ifl;
-		zbuf_idx = sprintf(zbuf,
+		zbuf_idx = snprintf(zbuf, sizeof(zbuf),
 				   "Mix HW %s %s deflate and HW %s %s inflate",
 				   opts->sync_mode ? "ASYNC" : "SYNC",
 				   opts->is_stream ? "STREAM" : "BLOCK",
@@ -844,14 +844,14 @@ static int test_hw(struct test_options *opts, char *model)
 		func = hw_dfl_perf;
 		info.out_size = opts->total_len * EXPANSION_RATIO;
 		info.out_chunk_sz = opts->block_size * EXPANSION_RATIO;
-		zbuf_idx = sprintf(zbuf, "HW %s %s deflate",
+		zbuf_idx = snprintf(zbuf, sizeof(zbuf), "HW %s %s deflate",
 				   opts->sync_mode ? "ASYNC" : "SYNC",
 				   opts->is_stream ? "STREAM" : "BLOCK");
 	} else if (!strcmp(model, "hw_ifl_perf")) {
 		func = hw_ifl_perf;
 		info.out_size = opts->total_len * INFLATION_RATIO;
 		info.out_chunk_sz = opts->block_size * INFLATION_RATIO;
-		zbuf_idx = sprintf(zbuf, "HW %s %s inflate",
+		zbuf_idx = snprintf(zbuf, sizeof(zbuf), "HW %s %s inflate",
 				   opts->sync_mode ? "ASYNC" : "SYNC",
 				   opts->is_stream ? "STREAM" : "BLOCK");
 		ifl_flag = 1;
@@ -1024,12 +1024,12 @@ int run_self_test(struct test_options *opts)
 		}
 		if (opts->use_env && opts->poll_num) {
 			memset(poll_str, 0, POLL_STRING_LEN);
-			sprintf(poll_str,
+			snprintf(poll_str, POLL_STRING_LEN,
 				"sync-comp:8@0,sync-decomp:8@0,"
 				"async-comp:8@0,async-decomp:8@0");
 			setenv("WD_COMP_CTX_NUM", poll_str, 1);
 			memset(poll_str, 0, POLL_STRING_LEN);
-			sprintf(poll_str, "%d@0", opts->poll_num);
+			snprintf(poll_str, POLL_STRING_LEN, "%d@0", opts->poll_num);
 			setenv("WD_COMP_ASYNC_POLL_NUM", poll_str, 1);
 		}
 		f_ret |= test_hw(opts, "sw_dfl_hw_ifl");

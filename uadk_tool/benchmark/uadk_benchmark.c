@@ -236,7 +236,7 @@ int get_alg_name(int alg, char *alg_name)
 
 	for (i = 0; i < ALG_MAX; i++) {
 		if (alg == alg_options[i].alg) {
-			strcpy(alg_name, alg_options[i].type);
+			snprintf(alg_name, MAX_ALG_NAME, "%s", alg_options[i].type);
 			return 0;
 		}
 	}
@@ -654,7 +654,7 @@ int acc_default_case(struct acc_option *option)
 	ACC_TST_PRT("Test sec Cipher parameter default, alg: aes-128-cbc, set_times:3,"
 			"set_pktlen:1024 bytes, sync mode, one process, one thread.\n");
 
-	strcpy(option->algname, "aes-128-cbc");
+	snprintf(option->algname, MAX_ALG_NAME, "%s", "aes-128-cbc");
 	option->algtype = AES_128_CBC;
 	option->syncmode = SYNC_MODE;
 	option->modetype = SVA_MODE;
@@ -768,7 +768,7 @@ int acc_cmd_parse(int argc, char *argv[], struct acc_option *option)
 			goto to_exit;
 		case 1:
 			option->algtype = get_alg_type(optarg);
-			strcpy(option->algname, optarg);
+			snprintf(option->algname, MAX_ALG_NAME, "%s", optarg);
 			break;
 		case 2:
 			option->modetype = get_mode_type(optarg);
@@ -801,7 +801,7 @@ int acc_cmd_parse(int argc, char *argv[], struct acc_option *option)
 			option->prefetch = 1;
 			break;
 		case 12:
-			strcpy(option->engine, optarg);
+			snprintf(option->engine, sizeof(option->engine), "%s", optarg);
 			break;
 		case 13:
 			print_support_alg();
@@ -823,7 +823,7 @@ int acc_cmd_parse(int argc, char *argv[], struct acc_option *option)
 				ACC_TST_PRT("invalid: device name is %s\n", optarg);
 				goto to_exit;
 			}
-			strcpy(option->device, optarg);
+			snprintf(option->device, MAX_DEVICE_NAME, "%s", optarg);
 			break;
 		case 19:
 			option->mem_type = strtol(optarg, NULL, 0);

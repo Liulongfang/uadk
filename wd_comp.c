@@ -291,7 +291,8 @@ int wd_comp_init2_(const char *alg, __u32 sched_type, int task_type,
 			goto out_dlclose;
 		}
 
-		(void)strcpy(wd_comp_init_attrs.alg, alg);
+		(void)strncpy(wd_comp_init_attrs.alg, alg, CRYPTO_MAX_ALG_NAME - 1);
+		wd_comp_init_attrs.alg[CRYPTO_MAX_ALG_NAME - 1] = '\0';
 		wd_comp_init_attrs.sched_type = sched_type;
 		wd_comp_init_attrs.task_type = task_type;
 		wd_comp_init_attrs.ctx_params = &comp_ctx_params;

@@ -735,7 +735,8 @@ int wd_aead_init2_(char *alg, __u32 sched_type, int task_type,
 			goto out_dlclose;
 		}
 
-		(void)strcpy(wd_aead_init_attrs.alg, alg);
+		(void)strncpy(wd_aead_init_attrs.alg, alg, CRYPTO_MAX_ALG_NAME - 1);
+		wd_aead_init_attrs.alg[CRYPTO_MAX_ALG_NAME - 1] = '\0';
 		wd_aead_init_attrs.sched_type = sched_type;
 		wd_aead_init_attrs.task_type = task_type;
 		wd_aead_init_attrs.ctx_params = &aead_ctx_params;

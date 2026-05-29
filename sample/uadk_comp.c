@@ -473,7 +473,8 @@ int main(int argc, char *argv[])
 				cowfail("Can't find your algorithm!\n");
 				help = 1;
 			} else {
-				strcpy(config.algname, optarg);
+				strncpy(config.algname, optarg, MAX_ALG_LEN - 1);
+				config.algname[MAX_ALG_LEN - 1] = '\0';
 			}
 			break;
 		case 2:

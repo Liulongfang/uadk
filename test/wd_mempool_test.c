@@ -370,7 +370,7 @@ void *blk_test_thread(void *data)
 	int i, j;
 	j = opt->blk_size / 10;
 	for (i = 0;i < j;i++)
-		strcpy(block + i * 10, "xaaxaaxaax");
+		memcpy(block + i * 10, "xaaxaaxaax", 10);
 
 	printf("please check memory about numa, input any key and Entry key then go on:");
 	j = scanf("%d", &i);
