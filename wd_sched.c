@@ -1055,14 +1055,21 @@ static int wd_sched_poll_skey(struct wd_sched_ctx *sched_ctx, struct wd_sched_ke
 			 __u32 expect, __u32 *count)
 {
 	__u32 sum_poll_num = 0;
-	__u32 current_load;
 	__u32 poll_num;
 	__u32 idx, i;
 	int ret;
 
+	/* Get cache pointer and check if HUNGRY policy */
+	struct wd_sched_domain_idx_cache *cache = &skey->async_domain.idx_cache;
+	bool hungry_policy = (cache->policy == SCHED_POLICY_HUNGRY);
+
 	/* Poll async domain contexts */
-	for (i = 0; i < skey->async_domain.idx_cache.valid_count; i++) {
-		idx = skey->async_domain.idx_cache.idx_list[i];
+	for (i = 0; i < cache->valid_count; i++) {
+		/* For HUNGRY policy: skip ctx with load == 0 to avoid invalid MMIO */
+		if (hungry_policy && atomic_load(&cache->load_values[i]) == 0)
+			continue;
+
+		idx = cache->idx_list[i];
 
 		poll_num = 0;
 		ret = sched_ctx->poll_func(idx, expect, &poll_num);
@@ -1076,8 +1083,8 @@ static int wd_sched_poll_skey(struct wd_sched_ctx *sched_ctx, struct wd_sched_ke
 		}
 
 		/* Update load value for this context */
-		if (skey->async_domain.idx_cache.policy == SCHED_POLICY_HUNGRY)
-			wd_sched_skey_update_load(&skey->async_domain.idx_cache, i, -poll_num);
+		if (hungry_policy && poll_num > 0)
+			wd_sched_skey_update_load(cache, i, -poll_num);
 	}
 	*count = sum_poll_num;
 
@@ -1640,8 +1647,10 @@ static __u32 skey_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 static int skey_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *count)
 {
 	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
+	__u32 skey_num = sched_ctx->skey_num;
 	struct wd_sched_key *skey;
-	__u32 tidx;
+	__u32 start_pos, tpos, i;
+	__u32 poll_num, sum_count = 0;
 	int ret;
 
 	if (unlikely(!count || !sched_ctx || !sched_ctx->poll_func)) {
@@ -1649,15 +1658,32 @@ static int skey_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *cou
 		return -WD_EINVAL;
 	}
 
-	/* Use TLS-based thread index */
-	tidx = sched_get_poll_skey_tidx(sched_ctx);
-	skey = sched_ctx->skey[tidx];
-	if (!skey)
-		return -WD_EAGAIN;
+	if (unlikely(!skey_num))
+		return 0;
 
-	ret = wd_sched_poll_skey(sched_ctx, skey, expect, count);
-	if (unlikely(ret))
-		return ret;
+	/* Use TLS-based thread index as starting position for uniform distribution */
+	start_pos = sched_get_poll_skey_tidx(sched_ctx);
+
+	/* Traverse all skeys to ensure every skey can be polled */
+	for (i = 0; i < skey_num; i++) {
+		tpos = (start_pos + i) % skey_num;
+		skey = sched_ctx->skey[tpos];
+
+		/* Skip invalid skey or skey with no pending requests */
+		if (unlikely(!skey))
+			continue;
+		if (atomic_load(&skey->async_domain.pending_count) <= 0)
+			continue;
+
+		ret = wd_sched_poll_skey(sched_ctx, skey, expect, &poll_num);
+		if (unlikely(ret))
+			return ret;
+
+		sum_count += poll_num;
+		if (sum_count >= expect)
+			break;
+	}
+	*count = sum_count;
 
 	return 0;
 }
