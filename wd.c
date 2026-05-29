@@ -994,8 +994,12 @@ struct wd_capability *wd_get_alg_cap(void)
 				goto alloc_err;
 			}
 			/* Flatten the secondary structure into the original binary-tuple format */
-			(void)strcpy(cap_node->alg_name, drv_node->algs[i].alg_name);
-			(void)strcpy(cap_node->drv_name, drv_node->drv_name);
+			(void)strncpy(cap_node->alg_name, drv_node->algs[i].alg_name,
+				      CRYPTO_MAX_ALG_NAME - 1);
+			cap_node->alg_name[CRYPTO_MAX_ALG_NAME - 1] = '\0';
+			(void)strncpy(cap_node->drv_name, drv_node->drv_name,
+				      CRYPTO_MAX_ALG_NAME - 1);
+			cap_node->drv_name[CRYPTO_MAX_ALG_NAME - 1] = '\0';
 			cap_node->available = drv_node->algs[i].available;
 			cap_node->priority = drv_node->priority;
 			cap_node->calc_type = drv_node->calc_type;

@@ -111,7 +111,7 @@ static int save_file_data(const char *alg, u32 pkg_len, u32 optype)
 		return 0;
 	}
 
-	fd = open(file_path, O_WRONLY|O_CREAT, 0777);
+	fd = open(file_path, O_WRONLY|O_CREAT, 0644);
 	if (fd < 0) {
 		ZIP_TST_PRT("compress data file open %s failed (%d)!\n", file_path, -errno);
 		return -ENODEV;

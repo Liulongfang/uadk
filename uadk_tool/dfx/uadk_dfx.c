@@ -15,7 +15,7 @@
 #include "uadk_dfx.h"
 
 #define ARRAY_SIZE(x)		(sizeof(x) / sizeof((x)[0]))
-#define PRIVILEGE_FLAG		0666
+#define PRIVILEGE_FLAG		0600
 
 enum dfx_usage_type {
 	DISPLAY_DEVICE = 0,
@@ -210,10 +210,12 @@ static void uadk_dev_usage_read(int argc, char *argv[])
 
 		switch (opt) {
 		case DISPLAY_DEVICE:
-			strcpy(device, optarg);
+			strncpy(device, optarg, MAX_DEV_NAME_LEN - 1);
+			device[MAX_DEV_NAME_LEN - 1] = '\0';
 			break;
 		case DISPLAY_ALG_NAME:
-			strcpy(alg_name, optarg);
+			strncpy(alg_name, optarg, MAX_ATTR_STR_SIZE - 1);
+			alg_name[MAX_ATTR_STR_SIZE - 1] = '\0';
 			break;
 		case DISPLAY_OP_TYPE:
 			op_type = strtol(optarg, NULL, 0);
