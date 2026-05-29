@@ -109,6 +109,9 @@ struct wd_sched_domain_idx_cache {
 
 	/* === Synchronization === */
 	pthread_mutex_t cache_lock;		    /* Lock for structure modifications */
+
+	/* === Mode detection === */
+	atomic_bool has_sub;			    /* Mark if load sub was ever called (init2 mode) */
 };
 
 /**
@@ -230,7 +233,6 @@ struct wd_sched_key {
  * @skey_num: Number of active session keys
  * @skey_lock: Lock for skey array
  * @skey: Array of session keys
- * @poll_tid: Thread IDs for polling
  */
 struct wd_sched_ctx {
 	__u32 policy;
@@ -244,7 +246,6 @@ struct wd_sched_ctx {
 	__u32 skey_num;
 	pthread_mutex_t skey_lock;
 	struct wd_sched_key *skey[SKEY_MAX_THREAD_NUM];
-	__u32 poll_tid[SKEY_MAX_THREAD_NUM];
 };
 
 /* ============================================================================
@@ -621,6 +622,9 @@ static int wd_sched_skey_cache_init(struct wd_sched_domain_idx_cache *cache, __u
 	atomic_store(&cache->min_load_idx, 0);
 	atomic_store(&cache->op_counter, 0);
 
+	/* Initialize mode detection flag (init mode by default) */
+	atomic_store(&cache->has_sub, false);
+
 	/* Set configuration */
 	cache->valid_count = 0;
 	cache->update_interval = SKEY_LOAD_UPDATE_INTERVAL;
@@ -864,6 +868,11 @@ static int wd_sched_skey_update_load(struct wd_sched_domain_idx_cache *cache,
 		atomic_fetch_add(&cache->load_values[ctx_idx], delta);
 	else
 		atomic_fetch_sub(&cache->load_values[ctx_idx], -delta);
+
+	/* Mark as init2 mode when load sub is called */
+	if (delta < 0)
+		atomic_store(&cache->has_sub, true);
+
 	return WD_SUCCESS;
 }
 
@@ -1153,40 +1162,38 @@ static handle_t sched_session_common_init(struct wd_sched_ctx *sched_ctx,
 
 out:
 	free(skey);
-	return (handle_t)(-WD_EINVAL);	
+	return (handle_t)(-WD_EINVAL);
 }
 
-static struct wd_sched_key *sched_get_poll_skey(struct wd_sched_ctx *sched_ctx)
+/**
+ * sched_get_poll_skey_tidx - Get the skey index for the current poll thread
+ * @sched_ctx: Scheduler context
+ *
+ * Uses thread-local storage (TLS) to assign each poll thread a unique index.
+ * The starting position is calculated as "index % skey_num" for uniform distribution.
+ *
+ * Return: tidx - skey array index
+ */
+static __u32 sched_get_poll_skey_tidx(struct wd_sched_ctx *sched_ctx)
 {
-	__u32 ctx_num = sched_ctx->skey_num;
-	__u32 tid = pthread_self();
-	__u16 tpos, start_pos;
-	__u16 i, tidx = 0;
+	/* Thread-local variable: 0 means uninitialized */
+	static __thread __u32 tls_thread_idx = 0;
+	static atomic_t g_thread_counter = 0;
+	__u32 skey_num = sched_ctx->skey_num;
+	__u32 start_pos;
 
-	/* Randomize the initial query position. */
-	start_pos = tid % ctx_num;
+	if (unlikely(!skey_num))
+		return 0;
 
-	for (i = 0; i < ctx_num; i++) {
-		/* Each thread re-determines the starting traversal position based on its tid. */
-		tpos = (start_pos + i) % ctx_num;
-		if (sched_ctx->poll_tid[tpos] == tid) {
-			tidx = tpos;
-			break;
-		} else if (sched_ctx->poll_tid[tpos] == 0) {
-			pthread_mutex_lock(&sched_ctx->skey_lock);
-			if (sched_ctx->poll_tid[tpos] == 0) {
-				sched_ctx->poll_tid[tpos] = tid;
-				tidx = tpos;
-			} else {
-				pthread_mutex_unlock(&sched_ctx->skey_lock);
-				return NULL;
-			}
-			pthread_mutex_unlock(&sched_ctx->skey_lock);
-			break;
-		}
+	/* First call: acquire global unique index */
+	if (unlikely(tls_thread_idx == 0)) {
+		tls_thread_idx = atomic_fetch_add(&g_thread_counter, 1) + 1;
 	}
 
-	return sched_ctx->skey[tidx];
+	/* Use thread index to calculate starting position (uniform distribution) */
+	start_pos = tls_thread_idx % skey_num;
+
+	return start_pos;
 }
 
 /**
@@ -1387,21 +1394,20 @@ static int round_robin_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
 	__u32 skey_num = sched_ctx->skey_num;
 	struct wd_sched_key *skey;
-	__u32 tid = pthread_self();
 	__u16 i, tpos, start_pos;
 	__u32 poll_num, sum_count = 0;
+	int ret;
 
 	if (unlikely(!skey_num))
 		return 0;
-	int ret;
 
 	if (unlikely(!count || !sched_ctx || !sched_ctx->poll_func)) {
 		WD_ERR("invalid: sched ctx or poll_func is NULL or count is zero!\n");
 		return -WD_EINVAL;
 	}
 
-	/* Optimize thread stagger using shift instead of modulo */
-	start_pos = (tid >> 3) % skey_num;
+	/* Use TLS-based thread index for uniform starting position */
+	start_pos = sched_get_poll_skey_tidx(sched_ctx);
 
 	/* Query the queues on each skey separately. */
 	for (i = 0; i < skey_num; i++) {
@@ -1593,8 +1599,18 @@ static __u32 skey_sched_pick_next_ctx(handle_t h_sched_ctx, void *sched_key,
 
 	/* If the queue with the lightest load is already fully loaded, then tasks cannot be dispatched. */
 	min_load = domain->idx_cache.load_values[ctx_idx];
-	if (min_load >= HW_CTX_FULL_DEPTH)
-		return INVALID_POS;
+	if (min_load >= HW_CTX_FULL_DEPTH) {
+		/* Check if load sub was ever called to distinguish init/init2 mode */
+		if (atomic_load(&domain->idx_cache.has_sub)) {
+			/* init2 mode: return queue full status */
+			return QUEUE_FULL_POS;
+		} else {
+			/* init mode: reduce load and return ctx for user retry */
+			wd_sched_skey_update_load(&domain->idx_cache, ctx_idx,
+						  -(HUNGRY_LOAD_THRESHOLD));
+			return min_ctx;
+		}
+	}
 
 	/* Update load value for send one task */
 	wd_sched_skey_update_load(&domain->idx_cache, ctx_idx, 1);
@@ -1625,6 +1641,7 @@ static int skey_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *cou
 {
 	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
 	struct wd_sched_key *skey;
+	__u32 tidx;
 	int ret;
 
 	if (unlikely(!count || !sched_ctx || !sched_ctx->poll_func)) {
@@ -1632,7 +1649,9 @@ static int skey_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *cou
 		return -WD_EINVAL;
 	}
 
-	skey = sched_get_poll_skey(sched_ctx);
+	/* Use TLS-based thread index */
+	tidx = sched_get_poll_skey_tidx(sched_ctx);
+	skey = sched_ctx->skey[tidx];
 	if (!skey)
 		return -WD_EAGAIN;
 
@@ -1793,6 +1812,7 @@ static int instr_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 {
 	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
 	struct wd_sched_key *skey;
+	__u32 tidx;
 	int ret;
 
 	if (unlikely(!count || !sched_ctx || !sched_ctx->poll_func)) {
@@ -1800,7 +1820,9 @@ static int instr_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 		return -WD_EINVAL;
 	}
 
-	skey = sched_get_poll_skey(sched_ctx);
+	/* Use TLS-based thread index */
+	tidx = sched_get_poll_skey_tidx(sched_ctx);
+	skey = sched_ctx->skey[tidx];
 	if (!skey)
 		return -WD_EAGAIN;
 
@@ -2121,7 +2143,6 @@ simple_ok:
 
 	for (i = 0; i < SKEY_MAX_THREAD_NUM; i++) {
 		sched_ctx->skey[i] = NULL;
-		sched_ctx->poll_tid[i] = 0;
 	}
 	pthread_mutex_init(&sched_ctx->skey_lock, NULL);
 	sched_ctx->skey_num = 0;

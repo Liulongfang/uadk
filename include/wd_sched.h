@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #define INVALID_POS	0xFFFFFFFF
+#define QUEUE_FULL_POS	0x1FFFFFFF
 
 /* The global policy type */
 enum sched_policy_type {

@@ -1405,7 +1405,7 @@ int wd_check_ctx(struct wd_ctx_config_internal *config, __u8 mode, __u32 idx)
 {
 	struct wd_ctx_internal *ctx;
 
-	if (unlikely(idx == INVALID_POS))
+	if (unlikely(idx == QUEUE_FULL_POS))
 		return -WD_EBUSY;
 
 	if (unlikely(idx >= config->ctx_num)) {
