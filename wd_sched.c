@@ -1462,21 +1462,27 @@ static int round_robin_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *co
 	__u32 poll_num, sum_count = 0;
 	int ret;
 
-	if (unlikely(!skey_num))
-		return 0;
-
 	if (unlikely(!count || !sched_ctx || !sched_ctx->poll_func)) {
 		WD_ERR("invalid: sched ctx or poll_func is NULL or count is zero!\n");
 		return -WD_EINVAL;
 	}
 
+	if (unlikely(!skey_num))
+		return 0;
+
 	/* Use TLS-based thread index for uniform starting position */
 	start_pos = sched_get_poll_skey_tidx(sched_ctx);
 
-	/* Query the queues on each skey separately. */
-	for (i = 0; i < skey_num; i++) {
-		tpos = (start_pos + i) % skey_num;
+	/* Query the queues on each skey separately.
+	 * Iterate full array to handle reused slots correctly.
+	 */
+	for (i = 0; i < SKEY_MAX_THREAD_NUM; i++) {
+		tpos = (start_pos + i) % SKEY_MAX_THREAD_NUM;
 		skey = sched_ctx->skey[tpos];
+
+		/* Skip NULL slot (session freed and slot reused) */
+		if (unlikely(!skey))
+			continue;
 
 		/* Skip session if no pending requests */
 		if (atomic_load(&skey->async_domain.pending_count) <= 0)
@@ -1727,9 +1733,11 @@ static int skey_sched_poll_policy(handle_t h_sched_ctx, __u32 expect, __u32 *cou
 	/* Use TLS-based thread index as starting position for uniform distribution */
 	start_pos = sched_get_poll_skey_tidx(sched_ctx);
 
-	/* Traverse all skeys to ensure every skey can be polled */
-	for (i = 0; i < skey_num; i++) {
-		tpos = (start_pos + i) % skey_num;
+	/* Traverse all skeys to handle slot reuse correctly.
+	 * Iterate full array since slots may be NULL after session free.
+	 */
+	for (i = 0; i < SKEY_MAX_THREAD_NUM; i++) {
+		tpos = (start_pos + i) % SKEY_MAX_THREAD_NUM;
 		skey = sched_ctx->skey[tpos];
 
 		/* Skip invalid skey or skey with no pending requests */
