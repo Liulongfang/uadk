@@ -182,6 +182,7 @@ struct wd_sched {
 	const char *name;
 	int sched_policy;
 	handle_t (*sched_init)(handle_t h_sched_ctx, void *sched_param);
+	void (*sched_uninit)(handle_t h_sched_ctx, handle_t h_sched_key);
 	__u32 (*pick_next_ctx)(handle_t h_sched_ctx,
 				  void *sched_key,
 				  const int sched_mode);

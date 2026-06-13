@@ -1109,7 +1109,7 @@ static void delay_us(int ustime)
 	usleep(1);
 }
 
-static void sched_skey_param_init(struct wd_sched_ctx *sched_ctx, struct wd_sched_key *skey)
+static int sched_skey_param_init(struct wd_sched_ctx *sched_ctx, struct wd_sched_key *skey)
 {
 	__u32 i;
 
@@ -1119,12 +1119,36 @@ static void sched_skey_param_init(struct wd_sched_ctx *sched_ctx, struct wd_sche
 			sched_ctx->skey[i] = skey;
 			sched_ctx->skey_num++;
 			pthread_mutex_unlock(&sched_ctx->skey_lock);
-			WD_ERR("success: get valid skey node[%u]!\n", i);
+			WD_DEBUG("success: get valid skey node[%u]!\n", i);
+			return 0;
+		}
+	}
+	pthread_mutex_unlock(&sched_ctx->skey_lock);
+	WD_ERR("invalid: skey node number exceeds SKEY_MAX_THREAD_NUM(%d)!\n",
+	       SKEY_MAX_THREAD_NUM);
+	return -WD_ENOMEM;
+}
+
+static void sched_skey_param_uninit(struct wd_sched_ctx *sched_ctx, struct wd_sched_key *skey)
+{
+	__u32 i;
+
+	if (!sched_ctx || !skey)
+		return;
+
+	pthread_mutex_lock(&sched_ctx->skey_lock);
+	for (i = 0; i < SKEY_MAX_THREAD_NUM; i++) {
+		if (sched_ctx->skey[i] == skey) {
+			sched_ctx->skey[i] = NULL;
+			if (sched_ctx->skey_num > 0)
+				sched_ctx->skey_num--;
+			pthread_mutex_unlock(&sched_ctx->skey_lock);
+			WD_DEBUG("success: uninit skey node[%u]!\n", i);
 			return;
 		}
 	}
 	pthread_mutex_unlock(&sched_ctx->skey_lock);
-	WD_ERR("invalid: skey node number is too much!\n");
+	WD_ERR("warning: skey %p not found in sched_ctx array\n", skey);
 }
 
 static handle_t sched_session_common_init(struct wd_sched_ctx *sched_ctx,
@@ -1259,6 +1283,33 @@ static void session_sched_domain_destroy(struct wd_sched_key *skey)
 }
 
 /**
+ * sched_session_uninit - Uninitialize session key
+ * @h_sched_ctx: Scheduler context handle
+ * @h_sched_key: Session key handle to uninitialize
+ *
+ * Cleans up domain resources, unregisters from skey array, and frees memory.
+ * This is the counterpart to sched_session_common_init + session_sched_domain_init.
+ */
+static void sched_session_uninit(handle_t h_sched_ctx, handle_t h_sched_key)
+{
+	struct wd_sched_ctx *sched_ctx = (struct wd_sched_ctx *)h_sched_ctx;
+	struct wd_sched_key *skey = (struct wd_sched_key *)h_sched_key;
+
+	if (!skey)
+		return;
+
+	/* 1. Clean up sync/async domain resources */
+	session_sched_domain_destroy(skey);
+
+	/* 2. Unregister from skey array to enable slot reuse */
+	if (sched_ctx)
+		sched_skey_param_uninit(sched_ctx, skey);
+
+	/* 3. Free skey memory */
+	free(skey);
+}
+
+/**
  * session_sched_domain_init - Initialize session domains with sync/async contexts
  * @sched_ctx: Scheduler context
  * @skey: Session key to initialize
@@ -1344,7 +1395,13 @@ static handle_t round_robin_sched_init(handle_t h_sched_ctx, void *sched_param)
 		return (handle_t)(-WD_EINVAL);
 	}
 
-	sched_skey_param_init(sched_ctx, skey);	
+	ret = sched_skey_param_init(sched_ctx, skey);
+	if (ret) {
+		WD_ERR("failed to register skey in sched_ctx array!\n");
+		session_sched_domain_destroy(skey);
+		free(skey);
+		return (handle_t)(-WD_ENOMEM);
+	}
 	WD_INFO("initialized RR scheduler with sync and async domains\n");
 
 	return hskey;
@@ -1564,7 +1621,13 @@ static handle_t skey_sched_init(handle_t h_sched_ctx, void *sched_param)
 
 	/* Restore the initialization prop settings. */
 	skey->ctx_prop = def_prop;
-	sched_skey_param_init(sched_ctx, skey);
+	ret = sched_skey_param_init(sched_ctx, skey);
+	if (ret) {
+		WD_ERR("failed to register skey in sched_ctx array!\n");
+		session_sched_domain_destroy(skey);
+		free(skey);
+		return (handle_t)(-WD_ENOMEM);
+	}
 	WD_INFO("initialized Hungry scheduler with sync and async domains\n");
 
 	return hskey;
@@ -1731,7 +1794,13 @@ static handle_t loop_sched_init(handle_t h_sched_ctx, void *sched_param)
 
 	/* Restore the initialization prop settings. */
 	skey->ctx_prop = def_prop;
-	sched_skey_param_init(sched_ctx, skey);	
+	ret = sched_skey_param_init(sched_ctx, skey);
+	if (ret) {
+		WD_ERR("failed to register skey in sched_ctx array!\n");
+		session_sched_domain_destroy(skey);
+		free(skey);
+		return (handle_t)(-WD_ENOMEM);
+	}
 	WD_INFO("initialized Loop scheduler with sync and async domains\n");
 	return (handle_t)skey;
 }
@@ -1778,7 +1847,13 @@ static handle_t instr_sched_init(handle_t h_sched_ctx, void *sched_param)
 		return (handle_t)(-WD_EINVAL);
 	}
 
-	sched_skey_param_init(sched_ctx, skey);
+	ret = sched_skey_param_init(sched_ctx, skey);
+	if (ret) {
+		WD_ERR("failed to register skey in sched_ctx array!\n");
+		session_sched_domain_destroy(skey);
+		free(skey);
+		return (handle_t)(-WD_ENOMEM);
+	}
 
 	return (handle_t)skey;
 }
@@ -1883,7 +1958,13 @@ static handle_t session_dev_sched_init(handle_t h_sched_ctx, void *sched_param)
 		return (handle_t)(-WD_EINVAL);
 	}
 
-	sched_skey_param_init(sched_ctx, skey);	
+	ret = sched_skey_param_init(sched_ctx, skey);
+	if (ret) {
+		WD_ERR("failed to register skey in sched_ctx array!\n");
+		session_sched_domain_destroy(skey);
+		free(skey);
+		return (handle_t)(-WD_ENOMEM);
+	}
 	WD_INFO("initialized Dev RR scheduler with sync and async domains\n");
 	return (handle_t)skey;
 }
@@ -2078,13 +2159,14 @@ void wd_sched_rr_release(struct wd_sched *sched)
 	if (!sched_ctx)
 		goto ctx_out;
 
-	/* Release all session keys */
-	for (i = 0; i < sched_ctx->skey_num; i++) {
+	/* Release all session keys - iterate full array to catch residual entries */
+	for (i = 0; i < SKEY_MAX_THREAD_NUM; i++) {
 		if (sched_ctx->skey[i] != NULL) {
-			wd_sched_skey_domain_destroy(&sched_ctx->skey[i]->sync_domain);
-			wd_sched_skey_domain_destroy(&sched_ctx->skey[i]->async_domain);
+			/* Residual fallback: session was not properly freed via sched_uninit */
+			session_sched_domain_destroy(sched_ctx->skey[i]);
+			free(sched_ctx->skey[i]);
+			sched_ctx->skey[i] = NULL;
 		}
-		sched_ctx->skey[i] = NULL;
 	}
 	sched_ctx->skey_num = 0;
 
@@ -2175,6 +2257,7 @@ simple_ok:
 
 	sched->h_sched_ctx = (handle_t)sched_ctx;
 	sched->sched_init = sched_table[sched_type].sched_init;
+	sched->sched_uninit = sched_session_uninit;
 	sched->pick_next_ctx = sched_table[sched_type].pick_next_ctx;
 	sched->poll_policy = sched_table[sched_type].poll_policy;
 	sched->sched_policy = sched_type;

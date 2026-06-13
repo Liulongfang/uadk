@@ -338,8 +338,14 @@ void wd_cipher_free_sess(handle_t h_sess)
 	wd_memset_zero(sess->key, sess->key_bytes);
 	sess->mm_ops.free(sess->mm_ops.usr, sess->key);
 
-	if (sess->sched_key)
-		free(sess->sched_key);
+	if (sess->sched_key) {
+		if (wd_cipher_setting.sched.sched_uninit)
+			wd_cipher_setting.sched.sched_uninit(
+				wd_cipher_setting.sched.h_sched_ctx,
+				(handle_t)sess->sched_key);
+		else
+			free(sess->sched_key);
+	}
 	free(sess);
 }
 
