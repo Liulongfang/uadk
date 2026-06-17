@@ -259,7 +259,8 @@ int wd_dh_init2_(char *alg, __u32 sched_type, int task_type, struct wd_ctx_param
 			goto out_driver;
 		}
 
-		(void)strcpy(wd_dh_init_attrs.alg, alg);
+		(void)strncpy(wd_dh_init_attrs.alg, alg, CRYPTO_MAX_ALG_NAME - 1);
+		wd_dh_init_attrs.alg[CRYPTO_MAX_ALG_NAME - 1] = '\0';
 		wd_dh_init_attrs.sched_type = sched_type;
 		wd_dh_init_attrs.task_type = task_type;
 		wd_dh_init_attrs.ctx_params = &dh_ctx_params;

@@ -119,7 +119,8 @@ int wd_get_alg_type(const char *alg_name, char *alg_type)
 
 	for (i = 0; i < ARRAY_SIZE(alg_options); i++) {
 		if (strcmp(alg_name, alg_options[i].name) == 0) {
-			(void)strcpy(alg_type, alg_options[i].algtype);
+			(void)strncpy(alg_type, alg_options[i].algtype, ALG_NAME_SIZE - 1);
+			alg_type[ALG_NAME_SIZE - 1] = '\0';
 			return 0;
 		}
 	}

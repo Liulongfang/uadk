@@ -5,6 +5,7 @@ import os
 import os.path
 import sys, getopt
 import numpy as np
+import subprocess
 import tempfile
 
 class listcontent(object):
@@ -33,11 +34,13 @@ class listcontent(object):
             f.close()
             of = tempfile.NamedTemporaryFile(delete=False)
             of.close()
-            os.system("gzip -c --fast < %s > %s" % (f.name, of.name))
+            subprocess.run(["gzip", "-c", "--fast"], stdin=open(f.name, "rb"),
+                           stdout=open(of.name, "wb"), check=True)
             if not i:
-                os.system("cat %s > %s" % (of.name, self.ofile_nm))
+                subprocess.run(["cp", of.name, self.ofile_nm], check=True)
             else:
-                os.system("cat %s >> %s" % (of.name, self.ofile_nm))
+                with open(of.name, "rb") as src, open(self.ofile_nm, "ab") as dst:
+                    dst.write(src.read())
             i += 1
             os.remove(f.name)
             os.remove(of.name)
@@ -53,7 +56,8 @@ class listcontent(object):
                 break
             f.write(blk)
             f.close()
-            os.system("gunzip < %s > %s" % (f.name, self.ofile_nm))
+            subprocess.run(["gunzip"], stdin=open(f.name, "rb"),
+                           stdout=open(self.ofile_nm, "wb"), check=True)
             os.remove(f.name)
 
 def sw_deflate(ifile, ofile, blk_sz):

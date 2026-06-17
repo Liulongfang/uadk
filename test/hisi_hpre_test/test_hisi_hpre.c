@@ -9030,7 +9030,8 @@ static int parse_cmd_line(int argc, char *argv[])
 					g_config.core_mask[0] = 0x0; /* no binding */
 				}
 				temp = malloc(64);
-				strcpy(temp, optarg);
+				strncpy(temp, optarg, 63);
+				temp[63] = '\0';
 				temp[offset] = 0;
 				g_config.core_mask[1] = strtoull(temp, NULL, 16);
 				free(temp);
